@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>GuestXP Tv</title>
+    <meta name="format-detection" content="telephone=no" />
+    <meta name="msapplication-tap-highlight" content="no" />
+    <meta charset="utf-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <!-- <meta name="viewport" content="width=device-width, initial-scale=1.0" /> -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+
+    <!-- SAMSUNG: creates window.webapis (webapis.productinfo, .network,
+         .avplay, .systemcontrol, .appcommon ...).
+
+         IMPORTANT: the $WEBAPIS token is substituted by the TV ONLY for
+         locally packaged .wgt content. If this index.html is served from a
+         remote server (hosted-app / hosted-shell pattern), the TV does NOT
+         substitute it - the browser requests the literal path
+         "$WEBAPIS/webapis/webapis.js" from your web server, gets a 404, and
+         window.webapis is never created. Every Samsung API call then
+         silently degrades.
+
+         For a hosted app you must instead load webapis.js from inside the
+         signed shell .wgt, or keep index.html local and load only the
+         app's data remotely. -->
+    <!-- avplayextension.js teaches webapis.avplay the udp:// and rtp://
+         schemes. WITHOUT IT, IP MULTICAST LIVE TV DOES NOT WORK. Needs the
+         partner streamingtvplayer privilege to actually function, but the
+         script tag is harmless before that. -->
+    <script type="text/javascript" src="$WEBAPIS/avplayextension/avplayextension.js"></script>
+
+    <script type="text/javascript" src="$WEBAPIS/webapis/webapis.js"></script>
+
+    <!-- ================================================================
+         CONNECTION WARM-UP
+
+         The app runs from file://, so every call to https://tvapi.guestxp.com
+         is cross-origin and pays, per connection:
+             DNS lookup -> TLS handshake -> CORS preflight (OPTIONS) -> request
+         The Authorization header makes the preflight mandatory.
+
+         On a TV whose network has slow DNS or broken IPv6, that setup cost is
+         60-90s and is paid AGAIN for every request that opens a new socket -
+         which is exactly the 1-3 minute stall seen at each progress milestone.
+
+         Firing one throwaway request here, during the 2s splash, forces DNS,
+         TLS and the preflight to resolve ONCE and warms the socket pool before
+         provision-auth needs it. It runs in parallel with the splash, so it
+         costs nothing even when the network is fast.
+    ================================================================= -->
+    <!-- Loaded FIRST so its XHR hook captures the warm-up request and every
+         boot API call. Press 1 (or Info) to open. -->
+    <script type="text/javascript" src="javascript/debugOverlay.js"></script>
+
+    <link rel="dns-prefetch" href="https://tvapi.guestxp.com">
+    <link rel="preconnect" href="https://tvapi.guestxp.com" crossorigin>
+    <script type="text/javascript">
+      (function () {
+        try {
+          var t0 = Date.now();
+          var x = new XMLHttpRequest();
+          x.open('GET', 'https://tvapi.guestxp.com/app/weather', true);
+          x.timeout = 20000;
+          x.onreadystatechange = function () {
+            if (x.readyState === 4) {
+              console.log('[Warmup] connection ready in ' +
+                ((Date.now() - t0) / 1000).toFixed(1) + 's (status ' + x.status + ')');
+              if (window.bootStep) window.bootStep('connection warm-up', 'ok');
+            }
+          };
+          x.ontimeout = function () {
+            console.warn('[Warmup] host unreachable within 20s - DNS or IPv6 problem likely');
+          };
+          x.send();
+        } catch (e) {}
+      })();
+    </script>
+
+    <!-- ================================================================
+         NETWORK SELF-TEST
+
+         Fires three identical requests back to back and prints how long each
+         took. The RATIO between them is the whole diagnosis:
+
+           probe1 slow, probe2/3 FAST
+               -> connection setup (DNS / TLS / preflight) is the cost, and it
+                  is paid once. Warm-up works; something else is slow.
+
+           probe1 slow, probe2/3 ALSO SLOW
+               -> the connection is NOT being reused. Every request pays full
+                  setup again. That is the 60s-per-milestone pattern, and the
+                  fix is server-side keep-alive + Access-Control-Max-Age.
+
+           all three fast
+               -> the API is not the bottleneck at all; the time is going into
+                  image caching or something else on the device.
+
+         Read the result in the debug overlay Logs tab (press 1).
+    ================================================================= -->
+    <script type="text/javascript">
+      (function () {
+        var URL = 'https://tvapi.guestxp.com/app/weather';
+        var results = [];
+
+        function probe(n, done) {
+          var t0 = Date.now();
+          var x = new XMLHttpRequest();
+          x.open('GET', URL + '?probe=' + n, true);
+          x.timeout = 90000;
+          x.onreadystatechange = function () {
+            if (x.readyState !== 4) return;
+            var ms = Date.now() - t0;
+            results.push(ms);
+            console.log('[NetTest] probe ' + n + ': ' + (ms / 1000).toFixed(1) +
+                        's (status ' + x.status + ')');
+            done();
+          };
+          x.ontimeout = function () {
+            results.push(-1);
+            console.error('[NetTest] probe ' + n + ': TIMEOUT after 90s');
+            done();
+          };
+          x.send();
+        }
+
+        function verdict() {
+          var a = results[0], b = results[1], c = results[2];
+          console.log('[NetTest] ===== RESULT =====');
+          console.log('[NetTest] cold=' + a + 'ms  warm1=' + b + 'ms  warm2=' + c + 'ms');
+          if (a < 0 || b < 0 || c < 0) {
+            console.error('[NetTest] host unreachable - DNS or firewall problem');
+          } else if (a > 5000 && b > 5000) {
+            console.error('[NetTest] VERDICT: connection NOT reused. Every request ' +
+              'pays full DNS/TLS/preflight setup. Fix on the server: enable ' +
+              'HTTP keep-alive and send Access-Control-Max-Age: 86400.');
+          } else if (a > 5000 && b < 2000) {
+            console.warn('[NetTest] VERDICT: setup cost paid once only. The API is ' +
+              'not the bottleneck after the first call.');
+          } else {
+            console.log('[NetTest] VERDICT: API is fast. Time is going elsewhere ' +
+              '(image caching / device work).');
+          }
+        }
+
+        // Run after the warm-up has had a moment, and stagger so the probes
+        // are sequential rather than parallel.
+        setTimeout(function () {
+          probe(1, function () {
+            probe(2, function () {
+              probe(3, verdict);
+            });
+          });
+        }, 3000);
+      })();
+    </script>
+
+    <script type="text/javascript" src="config.js"></script>
+
+    <!-- Fonts -->
+    <link
+      rel="preload"
+      href="./css/fonts/lufga_regular.woff2"
+      as="font"
+      type="font/woff2"
+      crossorigin
+    />
+    <link
+      rel="preload"
+      href="./css/fonts/lufga_medium.woff2"
+      as="font"
+      type="font/woff2"
+      crossorigin
+    />
+    <link
+      rel="preload"
+      href="./css/fonts/lufga_semi_bold.woff2"
+      as="font"
+      type="font/woff2"
+      crossorigin
+    />
+    <link
+      rel="preload"
+      href="./css/fonts/lufga_bold.woff2"
+      as="font"
+      type="font/woff2"
+      crossorigin
+    />
+    <link
+      rel="preload"
+      href="./css/fonts/fontsMono/SpaceMono-Regular.woff2"
+      as="font"
+      type="font/woff2"
+      crossorigin
+    />
+    <link
+      rel="preload"
+      href="./css/fonts/fontsMono/SpaceMono-Italic.woff2"
+      as="font"
+      type="font/woff2"
+      crossorigin
+    />
+    <link
+      rel="preload"
+      href="./css/fonts/fontsMono/SpaceMono-Bold.woff2"
+      as="font"
+      type="font/woff2"
+      crossorigin
+    />
+    <link
+      rel="preload"
+      href="./css/fonts/fontsMono/SpaceMono-BoldItalic.woff2"
+      as="font"
+      type="font/woff2"
+      crossorigin
+    />
+
+    <script type="text/javascript" src="javascript/jquery.min.js"></script>
+
+    <!-- <script src="https://cdnjs.cloudflare.com/ajax/libs/paho-mqtt/1.0.1/mqttws31.min.js"></script> -->
+
+    <!-- debugOverlay.js: on-screen console, toggled with remote key 1.
+         Its LOG tab captures console output, which is where the [Phase] timing
+         lines appear. Loaded conditionally by the ENV check below. -->
+
+    <script>
+      // config.js ships ENV = "dev". The original LG condition only matched
+      // "development"/"staging", so the overlay never loaded. Both spellings
+      // are accepted here; "prod" is the only value that suppresses it.
+      if (false) {   // overlay is now loaded unconditionally above
+        var debugScript = document.createElement("script");
+        debugScript.type = "text/javascript";
+        debugScript.src = "javascript/debugOverlay.js";
+        document.head.appendChild(debugScript);
+      }
+    </script>
+
+    <script>
+      var fileJS = document.createElement("script");
+      fileJS.setAttribute("type", "text/javascript");
+      var fileName = "javascript/index.js";
+      fileJS.setAttribute("src", fileName);
+      if (typeof fileJS != "undefined")
+        document.getElementsByTagName("head")[0].appendChild(fileJS);
+    </script>
+    <style type="text/css">
+      .loadNot {
+        background: #ccc;
+        text-align: center;
+        width: 75%;
+        margin-left: 6%;
+        font-size: 30px;
+        padding-left: 120px;
+        padding-right: 120px;
+        padding-top: 60px;
+        padding-bottom: 60px;
+        margin-top: 21%;
+      }
+
+      .cssload-container {
+        position: fixed;
+        left: 0;
+        right: 0;
+      }
+    </style>
+  </head>
+
+  <body>
+    <!-- ================================================================
+         SAMSUNG AVPLAY SURFACE  (REQUIRED)
+
+         webapis.avplay draws onto the hardware video plane, but it will
+         only do so if this <object type="application/avplayer"> placeholder
+         exists in the DOM. On LG, hcap.Media needed no such element, which
+         is why it was never carried over - and why avplay.open() appeared
+         to succeed while the screen stayed black.
+
+         z-index 0 keeps it underneath #mainContent so the channel overlay
+         and the guide still draw on top of the video.
+    ================================================================= -->
+    <object id="av-player" type="application/avplayer"
+            style="position:fixed;top:0;left:0;width:1920px;height:1080px;
+                   background:transparent;z-index:0;"></object>
+
+    <div id="mainContent"></div>
+    <div id="menusWrapper"></div>
+    <div id="popUpFDFS"></div>
+    <div id="customMessage"></div>
+    <div
+      id="loading"
+      class="cssload-container loader-bg"
+      style="display: none; z-index: 9999"
+    >
+      <div id="loadingImg">
+        <img src="images/loader.png" class="imgLoader" />
+      </div>
+    </div>
+    <div
+      class="popup-overlay"
+      id="loadingPopup"
+      aria-live="polite"
+      aria-busy="true"
+      style="display: none; z-index: 9999"
+    >
+      <div class="popup-box">
+        <div class="lottie-wrap" id="lottieContainer"></div>
+        <div class="wait-text">Please wait…</div>
+      </div>
+    </div>
+    <!-- spare dives -->
+    <div id="genericDiv1"></div>
+    <div id="genericDiv2"></div>
+    <div id="genericDiv3"></div>
+    <div id="genericDiv4"></div>
+  </body>
+</html>

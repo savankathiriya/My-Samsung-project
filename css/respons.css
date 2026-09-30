@@ -1,0 +1,1087 @@
+@media screen and (max-width: 1280px) {
+  /* loader */
+  img.imgLoader {
+    width: 90px;
+  }
+
+  /* splash  */
+  .splash img {
+    width: 330px;
+    height: auto;
+  }
+
+  /* mac overlay styles */
+  #mac-wait {
+    font-size: 24px;
+  }
+
+  /* Activation Screen Responsive Styles */
+  .activation-title {
+    font-size: 32px;
+    margin: 0 0 30px 0;
+  }
+
+  .activation-instruction {
+    font-size: 18px;
+    margin: 0 0 35px 0;
+    padding: 0 20px;
+  }
+
+  .qr-wrapper {
+    padding: 8px;
+    margin: 0 auto 25px auto;
+  }
+
+  .device-code {
+    font-size: 20px;
+    margin: 0 auto;
+    margin-bottom: 20px;
+    letter-spacing: 1.5px;
+  }
+
+  .refresh-timer {
+    font-size: 16px;
+    margin: 0 0 40px 0;
+  }
+
+  .support-text {
+    font-size: 14px;
+    margin: 0 0 40px 0;
+    padding: 0 20px;
+  }
+
+  .powered-by {
+    font-size: 12px;
+    bottom: 20px;
+  }
+
+  /* Downloading Page Responsive Styles */
+  .downloading-content {
+    padding: 0 30px;
+    max-width: 700px;
+  }
+
+  .downloading-logo {
+    margin-bottom: 40px;
+  }
+
+  .downloading-logo img {
+    height: 60px;
+    max-width: 300px;
+  }
+
+  .downloading-heading {
+    font-size: 32px;
+    margin: 0 0 20px 0;
+  }
+
+  .downloading-subheading {
+    font-size: 24px;
+    margin: 40px 0 60px 0;
+  }
+
+  .downloading-progress-wrapper {
+    max-width: 400px;
+    margin: 0 auto 15px;
+  }
+
+  .downloading-progress-bar {
+    height: 10px;
+  }
+
+  .downloading-progress-text {
+    font-size: 20px;
+    margin: 15px 0 80px 0;
+  }
+
+  .downloading-footer {
+    bottom: 30px;
+  }
+
+  .downloading-powered {
+    font-size: 14px;
+  }
+
+  /* Language Selection Page Responsive Styles */
+  .hotel-name {
+    top: 20px;
+    font-size: 14px;
+  }
+
+  .language-welcome {
+    font-size: 24px;
+    margin: 0 0 15px 0;
+  }
+
+  .language-guest-message {
+    font-size: 16px;
+    margin: 0 0 8px 0;
+  }
+
+  .line {
+    margin: 20px auto;
+  }
+
+  .language-subtitle {
+    font-size: 15px;
+  }
+
+  .language-buttons {
+    margin-bottom: 30px;
+  }
+
+  .language-btn {
+    padding: 8px 20px;
+    border-radius: 20px;
+    margin: 8px 15px;
+    min-width: 150px;
+  }
+
+  .flag-icon {
+    width: 18px;
+    height: 18px;
+  }
+
+  .lang-text {
+    font-size: 13px;
+  }
+
+  .terms-container {
+    margin-bottom: 30px;
+  }
+
+  .checkbox-wrapper {
+    width: 22px;
+    height: 22px;
+  }
+
+  .checkbox-checked {
+    width: 15px;
+    height: 15px;
+  }
+
+  .checkbox-checked::after {
+    font-size: 12px;
+  }
+
+  .terms-text {
+    font-size: 14px;
+  }
+
+  .language-footer {
+    bottom: 25px;
+  }
+
+  .powered-text {
+    font-size: 12px;
+  }
+
+  /* clear data credentials page */
+  .clearData {
+    width: 60%;
+    padding: 34px;
+    border-radius: 10px;
+  }
+
+    .clearData h2 {
+      font-size: 32px;
+      margin: 0 0 17px;
+    }
+
+
+    .clearData p {
+      max-width: 527px;
+      margin: 0 auto 27px;
+      line-height: 1.4;
+      text-align: center;
+      word-break: break-word;
+    }
+    .clearData .celarDownText{
+      font-size: 18px;
+    }
+    .clearData .celarUpText{
+      font-size: 16px;
+    }
+    .clearData img {
+      width: 67px;
+      height: 67px;
+      margin-bottom: 20px;
+    }
+    .clearData .button-group button {
+      padding: 12px 24px;
+      font-size: 16px;
+      margin-right: 25px;
+    }
+
+    .clearData .ending-text {
+      font-size: 13px;
+      margin-top: 45px;
+      margin-bottom: -20px;
+    }
+    .clearData .button-group {
+      margin-top: 14px;
+    }
+
+  /* .popupDiv */
+  .popupDiv .overlay-screen {
+    width: 600px;
+    border-radius: 10px;
+    padding: 40px 0 30px;
+  }
+
+  .popupDiv .overlay-screen .popup-Title {
+    min-height: 60px;
+  }
+
+  .popupDiv .overlay-screen .popup-Title .popup-subhead {
+    font-size: 18px;
+  }
+
+  .popupDiv .overlay-screen.description .popup-btn-wrap .btn-default {
+    min-width: 360px;
+  }
+
+  .popupDiv .popup-btn-wrap {
+    text-align: center;
+    padding: 30px 0 0;
+  }
+
+  .popupDiv .popup-btn-wrap .btn-default {
+    color: #fff;
+    min-width: 170px;
+    height: 50px;
+    font-size: 20px;
+  }
+
+  .popupDiv .popup-Header {
+    font-size: 23px;
+    margin-bottom: 20px;
+  }
+
+  /* animation popup overlay */
+  .popup-overlay {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.6);
+    z-index: 999999;
+  }
+
+  .popup-box {
+    position: absolute;
+    width: 552px;
+    height: 347px;
+    top: 50%;
+    left: 50%;
+    margin-left: -277px;
+    margin-top: -173px;
+    background: rgb(89 88 95);
+    border-radius: 19px;
+    box-shadow: 0 14px 40px rgba(0, 0, 0, 0.25);
+    text-align: center;
+    padding: 19px;
+  }
+
+  .lottie-wrap {
+    display: inline-block;
+    width: 50%;
+    /* max-width: 360px; */
+    height: auto;
+  }
+
+  .wait-text {
+    margin-top: -20px;
+    font-family: lufga-medium;
+    font-size: 30px;
+    color: #fff;
+    opacity: 0.92;
+  }
+
+  /* checkout thank you message */
+    /* wrapper centered absolutely */
+    .checkoutThankYouScreen {
+      text-align: center;
+      margin-top: 200px;
+    }
+  
+    /* logo area */
+    .checkoutThankYouScreen .brand {
+      margin-bottom: 24px;
+    }
+    .checkoutThankYouScreen .brand img {
+      width: 133px;
+      height: 133px;
+      object-fit: contain;
+      display: inline-block;
+    }
+  
+    /* message */
+    .checkoutThankYouScreen .title {
+      margin-top: 24px;
+      /* font-weight: 600; */
+      font-size: 47px;
+      line-height: 1.2;
+      color: #fff;
+      font-family: lufga-regular;
+    }
+    .checkoutThankYouScreen .subtitle {
+      margin-top: 16px;
+      /* font-weight: 400; */
+      font-size: 23px;
+      opacity: 0.9;
+      color: #fff;
+      font-family: lufga-regular;
+    }
+
+  /* Header Section - Updated to match second screenshot */
+  .home-header {
+    padding: 10px 75px 0;
+    margin-top: 0px;
+  }
+
+  .logo-section {
+    margin-top: -3px;
+  }
+
+  .home-logo {
+    height: 140px;
+  }
+
+  .greeting {
+    font-size: 22px;
+    margin-right: 15px;
+  }
+
+  .room-number {
+    font-size: 22px;
+    padding: 0px;
+    height: 50px;
+  }
+
+  .flag-icon-header {
+    width: 40px;
+    height: 40px;
+  }
+
+  .language-selector.imageFocus .flag-icon-header {
+    box-shadow: 0 0 0 3px #ffffff, 0 0 10px rgba(255, 255, 255, 0.8);
+  }
+
+  .lang-code {
+    font-size: 22px;
+  }
+
+  /* Time and Weather Section - Updated for better visibility */
+  .time-weather-section {
+    margin-top: 13px;
+    margin-bottom: 15px;
+  }
+
+  .weather-icon {
+    width: 30px;
+    height: 30px;
+  }
+
+  .temperature {
+    font-size: 20px;
+  }
+
+  .current-time {
+    font-size: 58px;
+    letter-spacing: -1.5px;
+  }
+
+  .current-date {
+    font-size: 17px;
+    margin-top: 6px;
+  }
+
+  /* Menu Grid Section - Updated for better card sizing */
+  .app-grid-container {
+    padding: 0 45px 60px;
+    margin-top: 10px;
+  }
+
+  .menu-item {
+    width: 187px;
+    min-width: 187px;
+    height: 257px;
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.6);
+    margin-right: 16px;
+    margin-bottom: 25px;
+  }
+
+  .menu-upside-wrapper {
+    top: 50px;
+    height: 112px;
+  }
+
+  .menu-item.imageFocus .menu-upside-wrapper {
+    transform: translateX(-50%) scale(1.12);
+  }
+
+  .menu_upside_icon {
+    width: 90px;
+    height: 90px;
+  }
+
+  .menu-text {
+    bottom: 14px;
+    padding: 0 14px;
+  }
+
+  .menu-text span {
+    font-size: 19px;
+    margin: 0 0 5px 0;
+    letter-spacing: 0.3px;
+  }
+
+  .menu-text p {
+    font-size: 13px;
+  }
+
+  .menu-item .focus_glow_inner {
+    height: 50px;
+  }
+
+  /* Footer */
+  /* .home-footer {
+    bottom: 30px;
+    left: 75px;
+  } */
+
+  .footer-text {
+    font-size: 13px;
+  }
+
+  /* mac overlay styles */
+  #mac-error .mac_error_head {
+    font-size: 28px;
+  }
+
+  #mac-error .mac_error_head_span {
+    font-size: 20px;
+  }
+
+  /* ===========================
+   Device switch or restart 
+   Boxed panel centered: 1192px x 315px
+   =========================== */
+
+   .devicesContainer {
+    width: 100%;
+    height: 100vh;
+    min-height: 100vh;
+    position: relative;
+    box-sizing: border-box;
+    /* font-family: "Aeonik", "Helvetica Neue", Arial, sans-serif;  */
+    color: #fff;
+    overflow: hidden;
+    background: #000; /* keep your global background */
+  }
+  
+  /* subtle background image */
+  .devicesContainer .background-image img {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    opacity: 0.3;
+    z-index: 0;
+  }
+  
+  /* Centered boxed panel exactly like Figma */
+  .devicesContainer .device-panel {
+    width: 794px;
+    /* height: 210px; */
+    /* margin: 200px auto 0;  */
+    position: relative;
+    z-index: 2;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: flex-start;
+  }
+  
+  /* Title centered above the row */
+  .devicesContainer .menu-title {
+    font-weight: 700;
+    font-size: 27px;         /* matches figma small title */
+    color: #FFFFFF;
+    margin-bottom: 30px;     /* spacing between title and row */
+    letter-spacing: 0.4px;
+    text-align: center;
+  }
+  
+  /* The exact width/height of the horizontal row area */
+  .devicesContainer .device-row {
+    width: 100%;
+    /* height: 113px;          */
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 14px;               /* Figma gap = 20 */
+    box-sizing: border-box;
+  }
+  
+  /* Card shape and base look */
+  .devicesContainer .device-card {
+    width: 190px;            /* balanced card width to match Figma proportions */
+    height: 210px;           /* visual height */
+    border-radius: 9px;
+    padding: 12px 11px;
+    box-sizing: border-box;
+    margin-right: 18px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    background: linear-gradient(180deg, rgba(24,20,30,0.95), rgba(12,8,16,0.9));
+    border: 1px solid rgba(255,255,255,0.03);
+    box-shadow:
+      inset 0 1px 0 rgba(255,255,255,0.02),
+      0 6px 16px rgba(0,0,0,0.6);
+    transition: transform 180ms ease, box-shadow 180ms ease, border 180ms ease, background 180ms ease;
+  }
+  
+  /* icon container (center) */
+  .devicesContainer .device-icon {
+    width: 80px;
+    height: 80px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 8px;
+    margin-bottom: 44px;
+    position: relative;
+  }
+  
+  /* icon image itself */
+  .devicesContainer .device-icon img {
+    width: 100%;
+    height: 100%;
+    display: block;
+    filter: brightness(1.05);
+  }
+  
+  /* label under icon */
+  .devicesContainer .device-label {
+    font-size: 20px;
+    color: #FFFFFF;
+    text-align: center;
+    /* margin-top: 80px; */
+    letter-spacing: 0.3px;
+  }
+  
+  /* Focused state (neon outline + glow like Figma) */
+  .devicesContainer .device-card.imageFocus,
+  .device-card:focus,
+  .device-card:active {
+    transform: translateY(-8px) scale(1.03);
+    border: 2px solid rgba(0, 234, 181, 1); /* teal neon border */
+    box-shadow:
+      0 8px 27px rgba(0, 234, 181, 0.14),
+      inset 0 1px 0 rgba(255,255,255,0.02);
+    background: linear-gradient(180deg, rgba(16,12,20,0.95), rgba(6,6,10,0.88));
+  }
+  
+  /* Per-type subtle accents (you can tune colors) */
+  .devicesContainer .card-type-hdmi {
+    background: linear-gradient(180deg, #373536, #101021, #212121);
+  }
+  
+  /* a thin purple glow on left side for HDMI cards (pseudo-effect) */
+  .devicesContainer .card-type-hdmi:before {
+    content: "";
+    position: absolute;
+    left: -2px;
+    top: 4px;
+    bottom: 4px;
+    width: 4px;
+    border-radius: 6px;
+    /* background: linear-gradient(180deg, rgba(110,50,170,0.9), rgba(60,20,120,0.7)); */
+    opacity: 0.65;
+    pointer-events: none;
+  }
+  
+  /* bluetooth uses teal center highlight */
+  .devicesContainer .card-type-bluetooth {
+    background: linear-gradient(180deg, #373536, #101021, #212121);
+  }
+  .devicesContainer .card-type-bluetooth .device-icon {
+    /* box-shadow: 0 0 20px rgba(0, 210, 160, 0.12), inset 0 -2px 10px rgba(0, 210, 160, 0.03); */
+  }
+  
+  /* restart card subtle green ring on icon */
+  .devicesContainer .card-type-restart {
+    background: linear-gradient(180deg, #373536, #101021, #212121);
+  }
+  .devicesContainer .card-type-restart .device-icon {
+    /* box-shadow: 0 0 18px rgba(120,200,160,0.06); */
+  }
+  
+  /* descriptive paragraph under the boxed panel */
+  .content-text {
+    position: relative;
+    z-index: 2;
+    margin: 15px auto 0;
+    text-align: center;
+    color: rgba(255,255,255,0.65);
+    font-size: 9px;
+    line-height: 1.6;
+    max-width: 427px;
+  }
+  
+  /* ensure mainContent area takes viewport */
+  #mainContent, .devicesContainer {
+    min-height: 100vh;
+  }
+  
+  /* focused state */
+  .devicesContainer .imageFocus.device-card,
+  .device-card.imageFocus {
+    transform: translateY(-6px) scale(1.03);
+    border: 2px solid #00eab5;
+    box-shadow: 0 12px 30px rgba(0, 234, 181, 0.16);
+    background: linear-gradient(180deg, #373536, #101021);
+  }
+  
+  /* descriptive text under the cards */
+  .devicesContainer .content-text {
+    z-index: 2;
+    text-align: center;
+    margin-top: 19px;
+    color: rgba(255,255,255,0.7);
+    line-height: 1.4;
+    font-size: 9px;
+  }
+
+/* =====================================================
+   CASTING SCREEN (1280x720) â€“ RESPONSIVE SCALE
+   ===================================================== */
+
+.casting-logo img {
+    width: 90px;
+  }
+
+  .casting-weather {
+    font-size: 28px;
+  }
+
+  .casting-weather img {
+    width: 34px;
+  }
+
+  .casting-time {
+    font-size: 58px;
+  }
+
+  .casting-date {
+    font-size: 18px;
+  }
+
+  .casting-title {
+    font-size: 36px;
+    top: 190px;
+  }
+
+  .casting-card {
+    width: 270px;
+    height: 300px;
+  }
+
+  .casting-card:not(:last-child) {
+    margin-right: 40px;
+  }
+
+  .card-number {
+    width: 70px;
+    height: 70px;
+    font-size: 30px;
+    top: -22px;
+  }
+
+  .casting-card img {
+    width: 90px;
+  }
+
+  .casting-card p {
+    font-size: 24px;
+  }
+
+  .casting-subtext {
+    font-size: 16px;
+  }
+
+  .card-qr .qr-code {
+    width: 130px;
+    height: 130px;
+  }
+
+  /**** LG TV CHANNEL CSS *********/
+
+  /* LG TV Overlay  1280x720 */
+
+ .lg-tv-overlay {
+    width: 1020px;
+    height: 188px;
+    padding: 22px 28px;
+    bottom: 32px;
+    border-radius: 28px;
+  }
+
+  .lg-tv-left {
+    width: 95px;
+    gap: 12px;
+  }
+
+  .lg-tv-logo-container {
+    width: 130px;
+    height: 85px;
+  }
+
+  .lg-tv-logo {
+    max-width: 100%;
+    max-height: 100%;
+  }
+
+  .lg-tv-arrow {
+    width: 30px;
+    height: 60px;
+  }
+
+  .lg-tv-channel {
+    font-size: 30px;
+  }
+
+  .lg-tv-row {
+    font-size: 22px;
+  }
+
+  .lg-tv-row .time {
+    font-size: 22px;
+    margin: 0 0 0 12px;
+  }
+
+  .lg-tv-row .title {
+    font-size: 22px;
+    margin-left: 12px;
+  }
+
+  .lg-tv-datetime {
+    font-size: 20px;
+  }
+
+  .lg-tv-divider {
+    margin: 10px 0 12px;
+  }
+
+  .lg-tv-progress {
+    height: 5px;
+  }
+
+
+  /* =====================================================
+   TV GUIDE - RESPONSIVE 1280x720
+   Added for complete genre filtering support
+   ===================================================== */
+
+  .tv-guide-header {
+    top: 20px; /* Smaller top margin for 720p */
+  }
+
+  .tv-guide-genres {
+    padding: 0 25px 0 25px; /* Left and right padding */
+    gap: 12px;
+    height: 60px;
+    scroll-behavior: smooth; /* Smooth scrolling for genre navigation */
+  }
+
+  /* Add extra space after last genre to ensure it's fully visible when focused */
+  .tv-guide-genres::after {
+    content: '';
+    display: block;
+    min-width: 25px; /* Extra space to show last genre fully */
+    flex-shrink: 0;
+  }
+
+  .tv-guide-genre-tab {
+    font-size: 14px;
+    padding: 0 14px;
+    border: 2px solid transparent; /* Smaller border for 720p */
+    height: 100%; /* FULL HEIGHT */
+  }
+
+  .tv-guide-genre-tab.genre-focused,
+  .tv-guide-genre-tab.genre-active.genre-focused {
+    border-color: #ff0000;
+  }
+
+  .tv-guide-genre-tab.genre-active {
+    border-color: transparent;
+  }
+
+  .tv-guide-headers {
+    padding: 10px 25px;
+    gap: 12px;
+    grid-template-columns: 150px 1fr 1fr;
+    height: 45px;
+  }
+
+  .tv-guide-col-header {
+    font-size: 20px;
+    font-weight: bold; /* BOLD FONT */
+  }
+
+  .tv-guide-channels-list {
+    top: 125px; /* Below fixed header (20px + 60px genre + 45px headers) */
+    padding: 0 0 80px 0; /* Add bottom padding to ensure last channel is fully visible */
+  }
+
+  .tv-guide-channel-row {
+    grid-template-columns: 150px 1fr 1fr;
+    padding: 0 25px;
+    margin-bottom: 6px;
+    gap: 12px;
+  }
+
+  .tv-guide-channel-cell {
+    padding: 12px;
+  }
+
+  .channel-logo-box {
+    width: 100px;
+    height: 60px;
+    margin-bottom: 6px;
+  }
+
+  .channel-name-text {
+    font-size: 12px;
+    font-weight: 600; /* BOLD FONT */
+  }
+
+  .tv-guide-now-cell {
+    padding: 12px 15px;
+  }
+
+  .tv-guide-channel-row.channel-row-focused .tv-guide-now-cell {
+    border: 2px solid #ff0000;
+  }
+
+  .now-show-title {
+    font-size: 17px;
+    padding-right: 70px;
+  }
+
+  .now-time-badge {
+    font-size: 11px;
+    padding: 2px 8px;
+  }
+
+  .tv-guide-next-cell {
+    padding: 12px 15px;
+  }
+
+  .next-show-title {
+    font-size: 17px;
+  }
+
+  .next-show-time {
+    font-size: 12px;
+  }
+
+  .lgChannel_tuningText {
+    font-size: 36px;
+    padding: 22px 45px;
+    border-radius: 12px;
+  }
+
+/**** LIVE TV OVERLAY – 1280x720 ****/
+
+  .live-tv-overlay {
+    width: 1020px;
+    height: 188px;
+    padding: 22px 28px;
+    bottom: 32px;
+    border-radius: 28px;
+  }
+
+  .live-tv-left {
+    width: 95px;
+    gap: 12px;
+  }
+
+  .live-tv-logo-container {
+    width: 130px;
+    height: 85px;
+  }
+
+  .live-tv-logo {
+    max-width: 100%;
+    max-height: 100%;
+  }
+
+  .live-tv-arrow {
+    width: 30px;
+    height: 60px;
+  }
+
+  .live-tv-channel {
+    font-size: 30px;
+  }
+
+  .live-tv-row {
+    font-size: 22px;
+  }
+
+  .live-tv-row .time {
+    font-size: 22px;
+    margin: 0 0 0 12px;
+  }
+
+  .live-tv-row .title {
+    font-size: 22px;
+    margin-left: 12px;
+  }
+
+  .live-tv-datetime {
+    font-size: 20px;
+  }
+
+  .live-tv-divider {
+    margin: 10px 0 12px;
+  }
+
+  .live-tv-progress {
+    height: 5px;
+  }
+
+  .liveChannel_tuningText {
+    font-size: 36px;
+    padding: 22px 45px;
+    border-radius: 12px;
+  }
+
+   .live-tv-guide-header {
+    top: 15px;
+    height: 50px;
+    padding: 0 25px 0 25px;
+  }
+
+  .live-tv-guide-time {
+    font-size: 16px;
+  }
+
+  .live-tv-guide-title {
+    font-size: 20px;
+  }
+
+  .live-tv-guide-close {
+    font-size: 16px;
+  }
+
+  .back-icon {
+    width: 20px;
+    height: 20px;
+    margin-left: 10px;
+  }
+
+  .live-tv-guide-headers {
+    top: 65px;
+    padding: 10px 25px;
+    gap: 12px;
+    grid-template-columns: 150px 1fr 1fr;
+    height: 45px;
+  }
+
+  .live-tv-guide-col-header {
+    font-size: 20px;
+  }
+
+  .live-tv-guide-channels-list {
+    top: 110px;
+    padding: 0 0 80px 0;
+  }
+
+  .live-tv-guide-channel-row {
+    grid-template-columns: 150px 1fr 1fr;
+    padding: 0 25px;
+    margin-bottom: 6px;
+    gap: 12px;
+  }
+
+  .live-tv-guide-channel-cell {
+    padding: 12px;
+  }
+
+  .live-channel-logo-box {
+    width: 100px;
+    height: 60px;
+    margin-bottom: 6px;
+  }
+
+  .live-channel-name-text {
+    font-size: 12px;
+  }
+
+  .live-tv-guide-now-cell {
+    padding: 12px 15px;
+  }
+
+  .live-tv-guide-channel-row.live-channel-row-focused .live-tv-guide-now-cell {
+    border: 2px solid #ff0000;
+  }
+
+  .live-now-show-title {
+    font-size: 17px;
+    padding-right: 70px;
+  }
+
+  .live-now-time-badge {
+    font-size: 11px;
+    padding: 2px 8px;
+  }
+
+  .live-tv-guide-next-cell {
+    padding: 12px 15px;
+  }
+
+  .live-next-show-title {
+    font-size: 17px;
+  }
+
+  .live-next-show-time {
+    font-size: 12px;
+  }
+
+/* HDMI Disconnected Page — 1280x720 */
+
+.customHdmiDisconnectedPage {
+  padding: 28px;
+}
+
+.customHdmiDisconnectedPage .topHdmiBar {
+  margin-bottom: 32px;
+}
+
+.customHdmiDisconnectedPage .topHdmiBar img {
+  width: 110px;
+}
+
+.customHdmiDisconnectedPage .titleText {
+  font-size: 26px;
+  max-width: 620px;
+  margin: 0 0 28px 0;
+}
+
+.customHdmiDisconnectedPage .subText.line1 {
+  font-size: 20px;
+  margin-bottom: 12px;
+}
+
+.customHdmiDisconnectedPage .subText.line2 {
+  font-size: 15px;
+}
+
+}

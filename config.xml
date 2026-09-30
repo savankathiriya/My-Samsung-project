@@ -1,0 +1,114 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<widget xmlns="http://www.w3.org/ns/widgets"
+        xmlns:tizen="http://tizen.org/ns/widgets"
+        id="http://macrotech.com/HotelTV"
+        version="1.0.0"
+        viewmodes="maximized">
+
+    <tizen:application id="Htl7Kx9Qm2.HotelTV"
+                       package="Htl7Kx9Qm2"
+                       required_version="6.5"/>
+
+    <content src="index.html"/>
+    <icon src="images/logo.png"/>
+    <name>GuestXP Tv</name>
+    <description>Macrotech Hospitality TV Application (GuestXP)</description>
+    <author email="keval.k@macrotech.net">Macrotech</author>
+
+    <feature name="http://tizen.org/feature/screen.size.normal.1080.1920"/>
+
+    <!-- ================= HOSPITALITY METADATA ================= -->
+    <tizen:metadata key="http://samsung.com/tv/metadata/prelaunch.support"    value="true"/>
+    <tizen:metadata key="http://samsung.com/tv/metadata/use.network"          value="true"/>
+    <tizen:metadata key="http://samsung.com/tv/metadata/multitasking.support" value="true"/>
+    <tizen:metadata key="http://samsung.com/tv/metadata/resolution"           value="1920x1080"/>
+
+    <!-- DO NOT add use.hosted.app unless the UI is genuinely served from a
+         remote origin. With a local index.html it makes the TV look for a
+         hosted entry point that does not exist. -->
+
+    <!-- ================= PUBLIC PRIVILEGES ================= -->
+    <tizen:privilege name="http://tizen.org/privilege/internet"/>
+    <tizen:privilege name="http://tizen.org/privilege/tv.inputdevice"/>
+    <tizen:privilege name="http://tizen.org/privilege/tv.window"/>
+    <tizen:privilege name="http://tizen.org/privilege/tv.audio"/>
+    <tizen:privilege name="http://tizen.org/privilege/application.launch"/>
+    <tizen:privilege name="http://tizen.org/privilege/application.info"/>
+    <tizen:privilege name="http://tizen.org/privilege/appmanager.launch"/>
+    <tizen:privilege name="http://tizen.org/privilege/download"/>
+    <tizen:privilege name="http://tizen.org/privilege/filesystem.read"/>
+    <tizen:privilege name="http://tizen.org/privilege/filesystem.write"/>
+    <tizen:privilege name="http://developer.samsung.com/privilege/widgetdata"/>
+
+    
+    <tizen:privilege name="http://tizen.org/privilege/appmanager.kill"/>
+
+    <!-- =================================================================
+         REMOVED - THESE TWO BROKE THE INSTALL
+         =================================================================
+         <tizen:privilege name="http://tizen.org/privilege/appmanager.kill"/>
+             PLATFORM level. No partner or public certificate can grant it,
+             and requesting a privilege the certificate cannot grant makes
+             the WHOLE INSTALL FAIL. Over USB that failure is silent: the TV
+             keeps running the previously installed build, so every new
+             package appears to change nothing.
+             tizen.application.kill() therefore fails at runtime by design.
+             Every call site is already inside try/catch; the checkout reboot
+             covers the same ground.
+
+         <tizen:privilege name="http://tizen.org/privilege/system"/>
+             Not a valid TV privilege. Same silent-install-failure effect.
+
+         <tizen:privilege name="http://tizen.org/privilege/tv.channel"/>
+             Superseded on Samsung by developer.samsung.com/privilege/broadcast
+             (partner level), declared below.
+         ================================================================= -->
+
+    <!-- ================= PARTNER PRIVILEGES =================
+         Everything below needs a PARTNER-level distributor certificate.
+
+         NOW ACTIVE. The boot diagnostics reported deviceMac / deviceIp /
+         deviceSerial all null, which is exactly what happens when these are
+         absent: getMac(), getIp(), getDuid() and getSerialNumber() throw
+         SecurityError, device registration never completes, and the app sits
+         on the loading spinner forever.
+
+         These match the working reference project, which signs with the same
+         HotelTVProfile certificate. If INSTALL now fails, the certificate is
+         not partner level - comment drmplay and tvinfo out first, they are
+         the least essential, then broadcast and streamingtvplayer.
+         network.public and productinfo are the two you cannot do without.
+
+         What is lost while they are commented:
+           productinfo        DUID / model / firmware      -> report null
+           systemcontrol      serial, reboot, screen capture, auto-power-on
+           network.public     MAC and IP                   -> PROVISIONING FAILS
+           broadcast          RF live TV via tizen.tvchannel
+           streamingtvplayer  UDP/RTP multicast live TV
+           drmplay            Pro:Idiom / LYNK channels
+           tvinfo             caption / audio-language menu writes
+
+         network.public is the one that matters for first light: without it
+         getMac() and getIp() throw, device registration never completes, and
+         the app sits on the loading spinner forever.
+         ========================================================== -->
+    <tizen:privilege name="http://developer.samsung.com/privilege/productinfo"/>
+    <tizen:privilege name="http://developer.samsung.com/privilege/systemcontrol"/>
+    <tizen:privilege name="http://developer.samsung.com/privilege/network.public"/>
+    <tizen:privilege name="http://developer.samsung.com/privilege/broadcast"/>
+    <tizen:privilege name="http://developer.samsung.com/privilege/streamingtvplayer"/>
+    <tizen:privilege name="http://developer.samsung.com/privilege/drmplay"/>
+    <tizen:privilege name="http://developer.samsung.com/privilege/tvinfo"/>
+
+    <tizen:profile name="tv-samsung"/>
+
+    <tizen:setting screen-orientation="landscape"
+                   context-menu="disable"
+                   background-support="enable"
+                   encryption="disable"
+                   install-location="auto"
+                   hwkey-event="enable"/>
+
+    <access origin="*" subdomains="true"/>
+
+</widget>

@@ -1,0 +1,146 @@
+{
+    "files": [
+        {
+            "FileName": "javascript/navigation.js",
+            "VersionNo": 0.1
+        },
+        {
+            "FileName":"javascript/checkoutManage.js",
+            "VersionNo":0.1
+        },
+        {
+            "FileName": "javascript/pages.js",
+            "VersionNo": 0.1
+        },
+        {
+            "FileName": "css/normal.css",
+            "VersionNo": 0.1
+        },
+        {
+            "FileName": "css/styles.css",
+            "VersionNo": 0.1
+        },
+        {
+            "FileName": "css/respons.css",
+            "VersionNo": 0.1
+        },
+         {
+            "FileName":"javascript/qrcode.min.js",
+            "VersionNo":0.1	
+        },
+        {
+            "FileName": "javascript/appconfig.js",
+            "VersionNo": 0.1
+        },
+        {
+            "FileName":"javascript/indexDbCacheImages.js",
+            "VersionNo":0.1	
+        },
+        {
+            "FileName": "javascript/lottie.min.js",
+            "VersionNo": 0.1
+        },
+        {
+            "FileName": "javascript/mqtt-client.js",
+            "VersionNo": 0.1
+        },
+        {
+            "FileName": "javascript/googlecast.js",
+            "VersionNo": 0.1
+        },
+        {
+            "FileName": "javascript/canvas-renderers/canvas-base.js",
+            "VersionNo": 0.1
+        },
+        {
+            "FileName": "javascript/canvas-renderers/canvas-background.js",
+            "VersionNo": 0.1
+        },
+        {
+            "FileName": "javascript/canvas-renderers/canvas-animation.js",
+            "VersionNo": 0.1
+        },
+        {
+            "FileName": "javascript/canvas-renderers/canvas-font-loader.js",
+            "VersionNo": 0.1
+        },
+        {
+            "FileName": "javascript/canvas-renderers/canvas-text.js",
+            "VersionNo": 0.1
+        },
+        {
+            "FileName": "javascript/canvas-renderers/canvas-weather.js",
+            "VersionNo": 0.1
+        },
+        {
+            "FileName": "javascript/canvas-renderers/canvas-clock.js",
+            "VersionNo": 0.1
+        },
+        {
+            "FileName": "javascript/canvas-renderers/canvas-image.js",
+            "VersionNo": 0.1
+        },
+        {
+            "FileName": "javascript/canvas-renderers/canvas-gif.js",
+            "VersionNo": 0.1
+        },
+        {
+            "FileName": "javascript/canvas-renderers/canvas-video.js",
+            "VersionNo": 0.1
+        },
+        {
+            "FileName": "javascript/canvas-renderers/canvas-action.js",
+            "VersionNo": 0.1
+        },
+        {
+            "FileName": "javascript/canvas-renderers/canvas-renderer.js",
+            "VersionNo": 0.1
+        },
+        {
+            "FileName": "javascript/canvas-renderers/canvas-slideshow.js",
+            "VersionNo": 0.1
+        },
+        {
+            "FileName": "javascript/canvas-renderers/canvas-shapes.js",
+            "VersionNo": 0.1
+        },
+        {
+            "FileName": "javascript/canvas-renderers/canvas-scaler.js",
+            "VersionNo": 0.1
+        },
+        {
+            "FileName": "javascript/canvas-renderers/canvas-label.js",
+            "VersionNo": 0.1
+        },
+        {
+            "FileName": "javascript/canvas-renderers/canvas-ticker.js",
+            "VersionNo": 0.1
+        },
+        {
+            "FileName": "javascript/canvas-renderers/canvas-rss.js",
+            "VersionNo": 0.1
+        },
+        {
+            "FileName": "javascript/canvas-renderers/canvas-qr.js",
+            "VersionNo": 0.1
+        },
+        {
+            "FileName": "javascript/canvas-renderers/canvas-playlist.js",
+            "VersionNo": 0.1
+        },
+        {
+            "FileName": "javascript/canvas-renderers/canvas-screenSaver.js",
+            "VersionNo": 0.1
+        },
+        {
+            "FileName": "javascript/canvas-renderers/canvas-videoBgHelper.js",
+            "VersionNo": 0.1
+        }
+    ],
+    "mainFiles": [
+        {
+            "FileName": "javascript/main.js",
+            "VersionNo": 0.1
+        }
+    ]
+}

@@ -1,0 +1,32 @@
+<XAIT>
+    <versionNumber>182</versionNumber>
+    <AbstractService>
+        <svcName>GuestXP Tv</svcName>
+        <svcId>0x1204</svcId>
+        <isAutoSelect>true</isAutoSelect>
+        <ApplicationList>
+            <Application>
+                <appName>GuestXP Tv</appName>
+                <applicationIdentifier>
+                    <orgId>999</orgId>
+                    <appId>999</appId>
+                </applicationIdentifier>
+                <applicationDescriptor>
+                    <type>Hcap-h</type>
+                    <controlCode>AUTOSTART</controlCode>
+                    <visibility>NOT_VISIBLE_USERS</visibility>
+                    <priority>255</priority>
+                    <version>186</version>
+                </applicationDescriptor>
+                <HcapDescriptor>
+                    <url>http://lgprod.guestxp.com/procentric/application/AppData.zip</url>
+                    <applicationStructure>
+                        <baseDirectory>/</baseDirectory>
+                        <classpathExtension>/</classpathExtension>
+                        <initialClass>index.html</initialClass>
+                    </applicationStructure>
+                </HcapDescriptor>
+            </Application>
+        </ApplicationList>
+    </AbstractService>
+</XAIT>
