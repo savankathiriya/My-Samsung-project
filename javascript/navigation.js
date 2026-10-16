@@ -722,16 +722,16 @@ Navigation.homePageNavigation = function (event) {
         Main.liveTvChannelIdApi(comingfromWatchTvApp)
       }
       else if (appUrl === "OurHotel") {
-        // checkNetworkAndLaunch("Our Hotel", function () {
-        //   Main.deviceActivity("open","page",source);
-        //   Main.jsontemplateApi(app_url);
-        // })
+        checkNetworkAndLaunch("Our Hotel", function () {
+          Main.deviceActivity("open","page",source);
+          Main.jsontemplateApi(app_url);
+        })
       }
       else if (appUrl === "Playlist") {
-        // checkNetworkAndLaunch("Playlist", function () {
-        //   Main.deviceActivity("open","page",source);
-        //   Main.playlistApi(app_url);
-        // })
+        checkNetworkAndLaunch("Playlist", function () {
+          Main.deviceActivity("open","page",source);
+          Main.playlistApi(app_url);
+        })
       }
 
       break;
@@ -1112,7 +1112,23 @@ Navigation.deviceSwitchNavigation = function (event) {
         }
       }
       else {
-        ensureAppInstalled("com.webos.app.btspeakerapp");
+        // ensureAppInstalled("org.tizen.NetworkSpeaker");
+
+        var speakerAppId = "com.samsung.tv.googlecast-app";
+        console.log("[Bluetooth] action:", action, "- launching", speakerAppId);
+        try {
+          tizen.application.launch(
+              speakerAppId,
+              function () {
+                console.log("[Bluetooth] " + speakerAppId + " launched successfully");
+                try { Main.deviceActivity("open", "app", "Bluetooth"); } catch (e) { console.warn("deviceActivity threw", e); }
+              },
+              function (f) {
+                console.log("[Bluetooth] " + speakerAppId + " launch failed:", f && f.name, f && f.message);
+              });
+        } catch (e) {
+          console.log("[Bluetooth] launch threw:", e && e.name, e && e.message);
+        }
       }
       break;
     }

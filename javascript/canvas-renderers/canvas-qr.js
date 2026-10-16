@@ -153,12 +153,18 @@ var CanvasQr = (function () {
 
         var guestInfo      = null;
         var propertyDetail = null;
+        var room_number    = null;
+        var device_uuid    = null;
 
         try {
             if (typeof Main !== 'undefined') {
                 guestInfo      = Main.guestInfoData || null;
                 propertyDetail = (Main.deviceProfile && Main.deviceProfile.property_detail)
                                  ? Main.deviceProfile.property_detail : null;
+                room_number    = (Main.deviceProfile && Main.deviceProfile.room_number)
+                                 ? Main.deviceProfile.room_number : null;
+                device_uuid    = (Main.deviceProfile && Main.deviceProfile.device_uuid)
+                                 ? Main.deviceProfile.device_uuid : null;
             }
         } catch (e) {
             console.warn('[CanvasQr] Error accessing Main data sources:', e);
@@ -168,8 +174,13 @@ var CanvasQr = (function () {
             key = key.trim(); // handles "{{ owner_email }}" style spacing
             if (key.indexOf('g_') === 0) {
                 return _resolveSingleKey(match, key, guestInfo, 'guestInfoData');
+            } else if (key === 'room_number') {
+                return String(room_number || '');
+            } else if (key === 'device_uuid') {
+                return String(device_uuid || '');
+            } else {
+                return _resolveSingleKey(match, key, propertyDetail, 'property_detail');
             }
-            return _resolveSingleKey(match, key, propertyDetail, 'property_detail');
         });
 
         console.log('[CanvasQr] resolveAllVariables:', text, '→', resolved);
@@ -205,18 +216,53 @@ var CanvasQr = (function () {
             return null;
         }
 
+        /* Fallback order: requested level → lower levels → L
+           Long URLs (>~100 chars) overflow higher error-correction levels.
+           We silently step down until one succeeds. */
+        var levelFallback = (function () {
+            if (!QRCode.CorrectLevel) { return [correctLevel]; }
+            var cl = QRCode.CorrectLevel;
+            var all = [cl.H, cl.Q, cl.M, cl.L];          // highest → lowest
+            var idx = all.indexOf(correctLevel);
+            /* start from the requested level; if not found, start from H */
+            return idx >= 0 ? all.slice(idx) : all;
+        }());
+
         var dummy = document.createElement('span');
         var qrObj = null;
+        var usedLevel = correctLevel;
 
-        try {
-            qrObj = new QRCode(dummy, {
-                text:         data,
-                width:        10,   /* size irrelevant — we paint ourselves */
-                height:       10,
-                correctLevel: correctLevel
-            });
-        } catch (e) {
-            console.error('[CanvasQr] QRCode construction error:', e, '| data:', data);
+        for (var li = 0; li < levelFallback.length; li++) {
+            usedLevel = levelFallback[li];
+            try {
+                qrObj = new QRCode(dummy, {
+                    text:         data,
+                    width:        10,   /* size irrelevant — we paint ourselves */
+                    height:       10,
+                    correctLevel: usedLevel
+                });
+                if (li > 0) {
+                    console.warn('[CanvasQr] QR overflow — fell back to lower error level',
+                                 usedLevel, 'for data length', data.length);
+                }
+                break; /* success */
+            } catch (e) {
+                if (e && e.message && e.message.indexOf('overflow') !== -1) {
+                    /* "code length overflow" — try next lower level */
+                    console.warn('[CanvasQr] QR overflow at level', usedLevel,
+                                 '— trying lower level. data length:', data.length);
+                    qrObj = null;
+                    continue;
+                }
+                /* Unexpected error — bail immediately */
+                console.error('[CanvasQr] QRCode construction error:', e, '| data:', data);
+                return null;
+            }
+        }
+
+        if (!qrObj) {
+            console.error('[CanvasQr] QRCode construction failed at all error levels.',
+                          'Data length:', data.length, '| data:', data);
             return null;
         }
 
@@ -461,7 +507,7 @@ var CanvasQr = (function () {
         }
 
         /* ── Build QR module matrix ───────────────────────────────────── */
-        var correctLevel = _getCorrectLevel(el.errorLevel);
+        var correctLevel = _getCorrectLevel(el.qrErrorLevel || el.errorLevel);
         var matrix       = _buildQrMatrix(resolvedData, correctLevel);
 
         if (!matrix) {

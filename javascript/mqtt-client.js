@@ -17,11 +17,22 @@
     function warn() { if (!DEBUG) return; try { console.warn.apply(console,  arguments); } catch(e){} }
     function err()  {               try { console.error.apply(console, arguments); } catch(e){} }
 
-    // ── Forced broker URL ──────────────────────────────────────────────────────
-    var FORCED_WS_URL = 'wss://rs232.cloudext.co:8084/mqtt';
+    // ── Fallback broker URL (used only if Main.deviceProfile has no broker.host) ─
+    var FALLBACK_WS_URL = 'wss://rs232.cloudext.co:8084/mqtt';
+
+    // Builds 'wss://{broker.host}:8084/mqtt' from Main.deviceProfile.property_detail.mqtt_setting.broker
+    function resolveBrokerUrl() {
+        try {
+            var dp     = window.Main && Main.deviceProfile;
+            var mqtt_s = dp && dp.property_detail && dp.property_detail.mqtt_setting;
+            var broker = mqtt_s && mqtt_s.broker;
+            if (broker && broker.host) return 'wss://' + broker.host + ':8084/mqtt';
+        } catch (e) {}
+        return FALLBACK_WS_URL;
+    }
 
     var DEFAULT_BACKEND = {
-        url:             FORCED_WS_URL,
+        url:             FALLBACK_WS_URL,
         protocolVersion: 4,
         username:        '',
         password:        '',
@@ -320,7 +331,7 @@
         // opts is optional - everything is auto-read from Main.deviceProfile
         try {
             currentBackend = {
-                url:             FORCED_WS_URL,
+                url:             FALLBACK_WS_URL,
                 protocolVersion: DEFAULT_BACKEND.protocolVersion,
                 username:        DEFAULT_BACKEND.username,
                 password:        DEFAULT_BACKEND.password,
@@ -328,7 +339,7 @@
                 connectTimeout:  DEFAULT_BACKEND.connectTimeout
             };
 
-            // Merge explicit backend opts (url is always forced)
+            // Merge explicit backend opts (url is always resolved from Main.deviceProfile broker.host)
             if (opts && opts.backend) {
                 if (typeof opts.backend.username        !== 'undefined') currentBackend.username        = opts.backend.username;
                 if (typeof opts.backend.password        !== 'undefined') currentBackend.password        = opts.backend.password;
@@ -336,7 +347,7 @@
                 if (typeof opts.backend.keepAlive       !== 'undefined') currentBackend.keepAlive       = opts.backend.keepAlive;
                 if (typeof opts.backend.connectTimeout  !== 'undefined') currentBackend.connectTimeout  = opts.backend.connectTimeout;
             }
-            currentBackend.url = FORCED_WS_URL;
+            currentBackend.url = resolveBrokerUrl();
 
             // Pull identifiers + credentials from Main.deviceProfile
             if (window.Main && Main.deviceProfile) {
@@ -362,6 +373,7 @@
                         if (profileMqtt.protocolVersion)  currentBackend.protocolVersion = profileMqtt.protocolVersion;
                         if (profileMqtt.keepAlive)        currentBackend.keepAlive        = profileMqtt.keepAlive;
                         if (profileMqtt.connectTimeoutMs) currentBackend.connectTimeout   = profileMqtt.connectTimeoutMs;
+                        if (profileMqtt.broker && profileMqtt.broker.keep_alive) currentBackend.keepAlive = profileMqtt.broker.keep_alive;
                     }
                 } catch (e) { log('[MQTT] Profile mqtt merge error:', e); }
             }

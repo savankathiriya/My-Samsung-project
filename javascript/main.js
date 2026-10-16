@@ -280,21 +280,15 @@ Main.generateQrCode = function (key, code) {
   if (!utilities.validateString(code)) {
     throw "QR_API_FAILED";
   }
-  if (macro(window).width() == 1280) {
-    var qrcode = new QRCode(key, {
-      text: code,
-      width: 184,
-      height: 184,
-      correctLevel: QRCode.CorrectLevel.H,
-    });
-  } else {
-    var qrcode = new QRCode(key, {
-      text: code,
-      width: 277,
-      height: 277,
-      correctLevel: QRCode.CorrectLevel.H,
-    });
-  }
+  // Scale with screen height: 184px at 720p, 277px at 1080p, and still fits
+  // on any other resolution (e.g. a browser window during testing).
+  var qrSize = Math.max(120, Math.round(macro(window).height() * 0.256));
+  var qrcode = new QRCode(key, {
+    text: code,
+    width: qrSize,
+    height: qrSize,
+    correctLevel: QRCode.CorrectLevel.H,
+  });
 
   qrcode.clear();
   qrcode.makeCode(code);
@@ -683,20 +677,6 @@ function buildProvisionPayload(serial, mac) {
     return payload;
   }
 
-// Times every API call so a slow leg is visible in the log as
-// "[API] guest-info 74.2s" rather than an anonymous stall.
-Main.apiTimed = function (label, opts) {
-  var t0 = Date.now();
-  var done = function (tag) {
-    console.log('[API] ' + label + ' ' + tag + ' ' +
-      ((Date.now() - t0) / 1000).toFixed(1) + 's');
-  };
-  var okFn = opts.success, errFn = opts.error;
-  opts.success = function () { done('ok'); if (okFn) okFn.apply(this, arguments); };
-  opts.error   = function () { done('FAIL'); if (errFn) errFn.apply(this, arguments); };
-  return macro.ajax(opts);
-};
-
 Main.deviceRegistrationAPi = function () {
 
   console.log("Starting device registration API call with serial:", deviceSerialNumber, "and MAC:", deviceMac);
@@ -736,53 +716,13 @@ Main.deviceRegistrationAPi = function () {
         pageDetails = result.result;
         try { localStorage.setItem('cachedPageDetails', JSON.stringify(result.result)); } catch(ex) { console.warn('[Cache] Failed to save pageDetails:', ex); }
 
-        // ── PARALLEL FAN-OUT ────────────────────────────────────────────────
-        // guestInfo, weatherApi, getHomeData and deviceProfileApi were called
-        // STRICTLY IN SERIES - each waiting for the previous to return. None of
-        // them depends on another's result; they only share the auth token from
-        // provision-auth, which is already in hand here.
-        //
-        // On LG each leg took well under a second, so the serial chain cost
-        // nothing. On this TV each leg costs ~60s, so four in series is four
-        // minutes. Fired together they cost ONE leg, not four.
-        //
-        // The original nesting is preserved below and still runs, but only
-        // after all four have resolved - so ordering-sensitive code that runs
-        // inside the innermost callback is unaffected.
-        var _fanRemaining = 4;
-        var _fanT0 = Date.now();
-        var _fanDone = function (which) {
-          console.log('[API] parallel leg done: ' + which +
-            '  (' + ((Date.now() - _fanT0) / 1000).toFixed(1) + 's, ' +
-            (_fanRemaining - 1) + ' outstanding)');
-          if (--_fanRemaining > 0) return;
-          console.log('[API] all boot APIs complete in ' +
-            ((Date.now() - _fanT0) / 1000).toFixed(1) + 's');
-          _afterBootApis();
-        };
-
-        try {
-          Main.guestInfo(function ()       { _fanDone('guest-info'); });
-          Main.weatherApi(function ()      { _fanDone('weather'); });
-          Main.getHomeData(function ()     { _fanDone('home-data'); });
-          Main.deviceProfileApi(function () { _fanDone('device-profile'); });
-        } catch (eFan) {
-          console.error('[API] parallel fan-out failed, falling back to serial', eFan);
-          _fanRemaining = 1; _fanDone('fallback');
-        }
-
-        function _afterBootApis() {
+        // Begin sequence of API calls
+        Main.guestInfo(function () {
           Navigation.updateDownloadProgress(30);
-        Main._phaseT0 = Date.now();
-        Main.phaseMark = function (label) {
-          console.log('[Phase] ' + label + ' +' +
-            ((Date.now() - Main._phaseT0) / 1000).toFixed(1) + 's');
-        };
-        Main.phaseMark('provision-auth done (30%)');
-        if (window.bootStep) { window.bootStep('provision-auth', 'ok'); window.bootStep('guest-info', 'start'); }
+          Main.weatherApi(function () {
+            Main.getHomeData(function () {
+				Main.deviceProfileApi(function () {
 					Navigation.updateDownloadProgress(60);
-					if (Main.phaseMark) Main.phaseMark('guestInfo done (60%)');
-					if (window.bootStep) { window.bootStep('guest-info', 'ok'); window.bootStep('device-template', 'start'); }
 
           Main.lgSetting();
 
@@ -811,7 +751,10 @@ Main.deviceRegistrationAPi = function () {
 					oldDbRequest.onblocked = go;
 
 					setTimeout(go, 1500); // fallback in case no event arrives (rare)
-        }   // end _afterBootApis
+				})
+			});
+          });
+        });
       } else {
         // provision-auth returned but with no result payload — try offline cache first
         // if (Main.restoreFromCacheAndOpenApp()) {
@@ -1161,7 +1104,9 @@ Main.guestInfoAfterInterval = function () {
                   _destroyAppsOnly();
                 });
               } catch (e) {
-                console.warn('[GuestInfo Interval] Exception in deleteAppPrivateInfoNow:', e, '— destroying apps anyway');
+                console.warn('[GuestInfo Interval] Exception in deleteAppPrivateInfoNow: [' +
+                             (e && e.code) + '] name: ' + (e && e.name) +
+                             ' message: ' + (e && e.message) + ' — destroying apps anyway');
                 _destroyAppsOnly();
               }
 
@@ -1694,7 +1639,6 @@ Main.getTemplateApiData = function (comingFromHomeLang) {
 
 			if(result.status === true) {
 				Navigation.updateDownloadProgress(80);
-				if (Main.phaseMark) Main.phaseMark('channel list done (80%)');
 				if (window.bootStep) { window.bootStep('device-template', 'ok'); window.bootStep('channel list', 'ok'); window.bootStep('image pre-cache', 'start'); }
 				Main.templateApiData = result.result;
 				// Persist template data for offline fallback
@@ -1808,7 +1752,6 @@ Main.getTemplateApiData = function (comingFromHomeLang) {
 
 Main.loadCachedImagesThenRender = function() {
 	Navigation.updateDownloadProgress(95);
-	if (Main.phaseMark) Main.phaseMark('image cache done (95%)');
 	if (window.bootStep) window.bootStep('image pre-cache', 'ok');
 
 	setTimeout(function() {
@@ -1844,13 +1787,6 @@ Main.loadCachedImagesThenRender = function() {
         Main.deviceActivity("open","page","welcome screen");
 
 				// Complete the bar. It previously stopped at 95% even on success.
-				window._bootCompleted = true;   // disarm the boot watchdog
-				// Boot is done - the socket pool is free, so bring MQTT up now.
-				if (Main._pendingMqttInit) {
-					var _mq = Main._pendingMqttInit;
-					Main._pendingMqttInit = null;
-					setTimeout(_mq, 1200);
-				}
 				if (window.bootStep) window.bootStep('language page', 'ok');
 				try { Navigation.updateDownloadProgress(100); } catch (e) {}
 
@@ -2142,20 +2078,8 @@ Main.deviceProfileApi = function (callback) {
           setTimeout(function () {
             try {
               if(typeof MqttClient !== 'undefined' && MqttClient.init) {
-                // DEFERRED: the TV keeps a small socket pool. Opening the MQTT
-                // WebSocket while the boot API calls and image fetches are
-                // still in flight makes them queue behind it. MQTT is not
-                // needed until the guest can actually interact, so start it
-                // once the language page is up.
-                Main._pendingMqttInit = function () {
-                  try {
-                    MqttClient.init(Main.deviceProfile.property_detail.mqtt_setting, Main.deviceProfile.sr_no);
-                  } catch (e) { console.warn('[MQTT] deferred init failed', e); }
-                };
-                if (window._bootCompleted) { Main._pendingMqttInit(); Main._pendingMqttInit = null; }
-                else console.log('[MQTT] init deferred until boot completes');
-              }
-              else {
+                MqttClient.init(Main.deviceProfile.property_detail.mqtt_setting, Main.deviceProfile.sr_no);
+              }else {
                 console.warn('[MQTT] MqttClient module not loaded yet');
               }
             } catch (mqttError) {
@@ -2354,6 +2278,7 @@ Main.getHomeData = function (callback) {
         if (typeof callback === "function") {
           callback();
         }
+        return;
       }
 
       Main.homePageData = result.result || [];
@@ -2460,9 +2385,10 @@ Main.weatherApi = function (callback) {
         Main.weatherDetails = result.result;
         // Persist weather data for offline fallback
         try { localStorage.setItem('cachedWeatherDetails', JSON.stringify(Main.weatherDetails)); } catch(ex) { console.warn('[Cache] Failed to save weatherDetails:', ex); }
-        if (typeof callback === "function") {
-          callback();
-        }
+      }
+      // Always continue the boot chain, even when status is not true.
+      if (typeof callback === "function") {
+        callback();
       }
     },
     error: function (err) {
@@ -3156,6 +3082,7 @@ Main.prefetchAllChannelData = function () {
         macro.ajax({
           url: apiPrefixUrl + "channel-feed",
           type: "GET",
+          timeout: 20000,
           headers: { Authorization: "Bearer " + pageDetails.access_token },
           success: function (res2) {
             var r2 = typeof res2 === "string" ? JSON.parse(res2) : res2;

@@ -150,13 +150,16 @@ img.imgLoader.searchLoad {
   padding: 20px;
   border-radius: 0px;
   box-shadow: none;
-  margin: 0 auto 0px auto;
+  margin: 0 auto 30px auto;
 }
 
+/* Size comes from the generated QR (see Main.generateQrCode) so the white
+   frame always wraps it exactly. */
 .qr-code {
   display: block;
-  width: 184px;
-  height: 184px;
+  width: auto;
+  height: auto;
+  line-height: 0;
 }
 
 .qr-code canvas,

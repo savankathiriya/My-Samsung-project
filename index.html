@@ -154,6 +154,25 @@
       })();
     </script>
 
+        <!-- <script>
+  // Browser-only stub — skipped automatically on the TV
+  if (typeof webapis === 'undefined') {
+    console.warn('[DEV] Running in browser — using fake webapis');
+    window.webapis = {
+      network: {
+        getMac: () => 'b8a0b82ef567',   // use a MAC registered as a test device on your server
+        getIp:  () => '192.168.1.50'
+      },
+      productinfo: {
+        getDuid:     () => 'BROWSER-TEST-DUID',
+        getModel:    () => 'HG55AU800',
+        getFirmware: () => 'BROWSER'
+      }
+    };
+  }
+</script> -->
+
+
     <script type="text/javascript" src="config.js"></script>
 
     <!-- Fonts -->

@@ -395,18 +395,18 @@ Util.DevicesSwitchPage = function () {
         return ""
       }
     })();
-    for(var i = 0; i < connectedInputs.length; i++){
-      var input = connectedInputs[i];
-      var label = input.name || ("HDMI " + (input.index + 1));
-      var typeAttr = isFallback ? "HDMI" : input.type;
-      var indexAttr = isFallback ? i : input.index;
+    // for(var i = 0; i < connectedInputs.length; i++){
+    //   var input = connectedInputs[i];
+    //   var label = input.name || ("HDMI " + (input.index + 1));
+    //   var typeAttr = isFallback ? "HDMI" : input.type;
+    //   var indexAttr = isFallback ? i : input.index;
 
-      Text += '      <div class="device-card menu-btn card-type-hdmi" id="device-btn-' + rendered + '" data-action="input" data-type="' + typeAttr + '" data-index="' + indexAttr + '">';
-      Text += '        <div class="device-icon"><img src="' + hdmiPort + '" alt="' + label + '" /></div>';
-      Text += '        <div class="device-label">' + label + '</div>';
-      Text += '      </div>';
-      rendered++;
-    }
+    //   Text += '      <div class="device-card menu-btn card-type-hdmi" id="device-btn-' + rendered + '" data-action="input" data-type="' + typeAttr + '" data-index="' + indexAttr + '">';
+    //   Text += '        <div class="device-icon"><img src="' + hdmiPort + '" alt="' + label + '" /></div>';
+    //   Text += '        <div class="device-label">' + label + '</div>';
+    //   Text += '      </div>';
+    //   rendered++;
+    // }
 
     // place Bluetooth then Restart so final row becomes exactly: [HDMI cards...] [Bluetooth] [Restart]
     var bluetoothIndex = rendered;

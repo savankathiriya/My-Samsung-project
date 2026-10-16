@@ -314,33 +314,21 @@ function launchApp(appId,source) {
     try {
         if (!(typeof tizen !== "undefined" && tizen.application)) {
             console.log("tizen.application not available - cannot launch", appId);
-            Main.HideLoading();
             return;
         }
 
         tizen.application.launch(appId,
             function () {
-                Main.HideLoading();
                 console.log(" App launched successfully:", appId);
             },
             function (err) {
                 // NOTE: the LG version retried indefinitely here, which spins
                 // forever when the package genuinely is not installed.
-                Main.HideLoading();
                 console.log(" Failed to launch app:", appId, err && err.message);
             });
     } catch (e) {
-        Main.HideLoading();
         console.log("Exception while launching app:", e.message);
     }
-}
-
-function installApp(appId, source) {
-    // SAMSUNG: an application cannot install another package on Tizen.
-    // Packages are provisioned through Seller Office / Tizen Business Manager.
-    console.log(" Cannot install " + appId + " from the app - Tizen does not "
-        + "permit app-driven installation. Provision it via Seller Office / TBM.");
-    Main.HideLoading();
 }
 
 function ensureAppInstalled(appId, source) {
@@ -353,29 +341,30 @@ function ensureAppInstalled(appId, source) {
         return;
     }
 
-    tizen.application.getAppsInfo(
-        function (apps) {
-            var foundApp = null;
-            for (var i = 0; i < apps.length; i++) {
-                if (apps[i].id === appId) { foundApp = apps[i]; break; }
-            }
+    try {
+        tizen.application.getAppsInfo(
+            function (apps) {
+                var foundApp = null;
+                for (var i = 0; i < apps.length; i++) {
+                    if (apps[i].id === appId) { foundApp = apps[i]; break; }
+                }
 
-            Main.ShowLoading();
+                console.log("installed app count------------------->", apps.length);
+                console.log("installed app list------------------->", apps);
 
-            console.log("installed app count------------------->", apps.length);
-            console.log("installed app list------------------->", apps);
-
-            if (foundApp) {
-                console.log(" " + appId + " already installed.");
-                launchApp(appId, source);
-            } else {
-                console.log(" " + appId + " not found in installed apps.");
-                installApp(appId, source);
-            }
-        },
-        function (err) {
-            console.log("Failed to get app list:", err && err.message);
-        });
+                if (foundApp) {
+                    console.log(" " + appId + " already installed.");
+                    launchApp(appId, source);
+                } else {
+                    console.log(" " + appId + " not found in apps list.");
+                }
+            },
+            function (err) {
+                console.log("Failed to get app list:", err && err.message);
+            });
+    } catch (e) {
+        console.log("Exception while getting app list:", e.message);
+    }
 }
 
 function rebootTv(){

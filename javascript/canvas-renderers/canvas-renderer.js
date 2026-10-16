@@ -326,6 +326,13 @@ var CanvasRenderer = (function() {
                     CanvasImage.render(ctx, el);
                 }
                 break;
+
+             case 'qrcode':
+                /* New explicit QR code type */
+                if (typeof CanvasQr !== 'undefined') {
+                     CanvasQr.render(ctx, el);
+                }
+                break;
                 
             case 'gif':
                 CanvasGif.render(ctx, el, canvas);

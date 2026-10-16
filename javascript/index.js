@@ -1,77 +1,11 @@
 var app = {}
 var macro = jQuery.noConflict();
 var appConfig = {
-	appVersion:"v1.1210"
+	appVersion:"v1.1290"
 };
 var loadFilePaths = 'macrotv.json';
 var apiPrefixUrl = "https://tvapi.guestxp.com/app/";
 
-// ── HTTP behaviour for a file:// origin ──────────────────────────────────────
-// Every API call is cross-origin from a packaged app, and the Authorization
-// header forces a CORS preflight on each one. The browser will REUSE a cached
-// preflight, but only if the server sends Access-Control-Max-Age - ask your
-// backend team to add:
-//     Access-Control-Allow-Origin: null      (a file:// app sends Origin: null)
-//     Access-Control-Allow-Headers: Authorization, Content-Type
-//     Access-Control-Max-Age: 86400
-// Without Max-Age every single request pays an extra round trip, which on this
-// TV's network is the difference between seconds and minutes.
-// ── PER-REQUEST TIMING ───────────────────────────────────────────────────────
-// Wraps macro.ajax so EVERY call logs its own duration. The download screen
-// stalls at 50/60/80/95 - each of those is one API call - and this prints
-// exactly how long each one took, and how much of it was time-to-first-byte.
-// Read it in the debug overlay Logs tab: press 1.
-try {
-  if (typeof macro !== 'undefined' && macro.ajax && !macro.__timed) {
-    var _origAjax = macro.ajax;
-    macro.ajax = function (opts) {
-      if (!opts || typeof opts !== 'object') return _origAjax.apply(this, arguments);
-
-      var label = String(opts.url || '?').split('/').pop().split('?')[0] || '?';
-      var t0 = Date.now();
-      var tFirstByte = null;
-
-      var origXhrFn = opts.xhr;
-      opts.xhr = function () {
-        var x = origXhrFn ? origXhrFn.apply(this, arguments)
-                          : new window.XMLHttpRequest();
-        try {
-          x.addEventListener('readystatechange', function () {
-            // readyState 2 = headers received. The gap between send() and this
-            // is connection setup: DNS + TLS + preflight + server think time.
-            if (x.readyState === 2 && tFirstByte === null) {
-              tFirstByte = Date.now() - t0;
-            }
-          }, false);
-        } catch (e) {}
-        return x;
-      };
-
-      var origComplete = opts.complete;
-      opts.complete = function (jqXHR, textStatus) {
-        var total = Date.now() - t0;
-        console.log('[API] ' + label + '  ' + (total / 1000).toFixed(1) + 's total' +
-          (tFirstByte !== null ? '  (' + (tFirstByte / 1000).toFixed(1) + 's to first byte)' : '') +
-          '  ' + textStatus + ' ' + (jqXHR && jqXHR.status));
-        if (origComplete) origComplete.apply(this, arguments);
-      };
-
-      return _origAjax.call(this, opts);
-    };
-    macro.__timed = true;
-  }
-} catch (e) { console.warn('[API] timing hook failed', e); }
-
-try {
-  if (typeof macro !== 'undefined' && macro.ajaxSetup) {
-    macro.ajaxSetup({
-      // Do NOT append a cache-busting timestamp: it makes every URL unique,
-      // so no response is ever reused and no preflight result is ever cached.
-      cache: true,
-      timeout: 20000
-    });
-  }
-} catch (e) {}
 var scount = 0, mainCount = 0;
 var isLoading = false;
 var airMouse = false;
@@ -332,42 +266,7 @@ function _attemptGetMac(onComplete) {
     });
 }
 
-// ── BOOT WATCHDOG ────────────────────────────────────────────────────────────
-// Give the whole boot chain a hard ceiling. If it has not reached the language
-// page in 60s, open the app from cache anyway: a stale portal is recoverable,
-// a frozen progress bar is a support call.
-function armBootWatchdog() {
-  if (window._bootWatchdog) return;
-  window._bootWatchdog = setTimeout(function () {
-    if (window._bootCompleted) return;
-    console.error('[Boot] chain stalled - opening from cache. db=' +
-      (Main.db ? 'open' : 'none') +
-      ' dbUnavailable=' + !!Main._dbUnavailable +
-      ' ip=' + deviceIp + ' mac=' + deviceMac);
-
-    try {
-      if (typeof Main.logTvException === 'function') {
-        Main.logTvException({
-          error_type:    'BOOT_CHAIN_STALLED',
-          error_code:    'BOOT_TIMEOUT_60S',
-          error_message: 'Boot chain did not reach the language page within 60s',
-          error_source:  'armBootWatchdog',
-          module:        'boot',
-          action:        'open_from_cache'
-        });
-      }
-    } catch (e) {}
-
-    try {
-      if (typeof Main.restoreFromCacheAndOpenApp === 'function') {
-        Main.restoreFromCacheAndOpenApp();
-      }
-    } catch (e) { console.error('[Boot] cache restore failed', e); }
-  }, 60000);
-}
-
 function startMacAcquisitionFlow() {
-	armBootWatchdog();
 	if (window.bootStep) { window.bootStep('splash shown', 'ok'); window.bootStep('MAC / IP acquired', 'start'); }
 	showGettingMacScreen();
 
@@ -553,6 +452,23 @@ function getDeviceModelName() {
   } catch (ex) {
     console.error('[ProductInfo] Exception:', 'model_name', ex);
   }
+  logFirmwareInfo();
+}
+
+// Log firmware / Tizen version so the debug overlay shows which webapis
+// (e.g. deleteAppPrivateInfoNow, Tizen 9.0+) this TV supports.
+function logFirmwareInfo() {
+  var info = {};
+  try { info.model = webapis.productinfo.getRealModel(); } catch (e) {}
+  try { info.firmware = webapis.productinfo.getFirmware(); } catch (e) {}
+  try { info.webapisVersion = webapis.productinfo.getVersion(); } catch (e) {}
+  try {
+    info.tizenVersion = tizen.systeminfo.getCapability('http://tizen.org/feature/platform.version');
+  } catch (e) {}
+  console.log('[ProductInfo] model: ' + info.model +
+              ' | firmware: ' + info.firmware +
+              ' | webapis: ' + info.webapisVersion +
+              ' | Tizen: ' + info.tizenVersion);
 }
 
 function getDeviceTvName() {
@@ -1137,6 +1053,7 @@ document.addEventListener('output_connection_changed', function(event) {
       macro.ajax({
         url: apiPrefixUrl + "device-profile",
         type: "PATCH",
+        timeout: 20000,
         data: JSON.stringify(payload),
         contentType: "application/json; charset=utf-8",
         headers: {
@@ -1184,6 +1101,7 @@ document.addEventListener('idcap::mpi_cable_status_changed', function(param) {
       macro.ajax({
         url: apiPrefixUrl + "device-profile",
         type: "PATCH",
+        timeout: 20000,
         data: JSON.stringify(payload),
         contentType: "application/json; charset=utf-8",
         headers: {
@@ -1410,12 +1328,19 @@ function handleMqttCommand(cmd, data, topic) {
           //   console.log('[MQTT] Calling deleteAppPrivateInfoNow (no reboot)...');
 
             try {
+              console.log('[MQTT] typeof deleteAppPrivateInfoNow = ' +
+                          (typeof webapis !== 'undefined' && webapis.systemcontrol
+                            ? typeof webapis.systemcontrol.deleteAppPrivateInfoNow
+                            : 'webapis.systemcontrol missing'));
               webapis.systemcontrol.deleteAppPrivateInfoNow(function (info) {
                 console.log('[MQTT] ✅ private guest data deleted (' + info + ') — now destroying apps');
                 _destroyAppsOnly();
               });
             } catch (e) {
-              console.warn('[MQTT] Exception in deleteAppPrivateInfoNow:', e, '— destroying apps anyway');
+              // WebAPIException fields are non-enumerable, so logging `e` prints {}.
+              console.warn('[MQTT] Exception in deleteAppPrivateInfoNow: [' +
+                           (e && e.code) + '] name: ' + (e && e.name) +
+                           ' message: ' + (e && e.message) + ' — destroying apps anyway');
               _destroyAppsOnly();
             }
 
