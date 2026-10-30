@@ -28,6 +28,19 @@ var CanvasAction = (function () {
     var _actionDomOverlays = []; // DOM card overlays for video-bg mode
     var _lastFocusedElementId = null; // restored on EXIT
 
+    /* Timestamp of the dynamic page currently loading, 0 when idle.
+       A guest hammering OK used to stack overlapping page loads — several
+       ajax calls in flight, each pushing history and each rendering on top
+       of the last. One navigation at a time; time-boxed so a request that
+       never reports back cannot wedge navigation for ever. */
+    var _pageLoadStartedAt = 0;
+    var PAGE_LOAD_TIMEOUT_MS = 31000;   // the template ajax itself times out at 30s
+
+    function _pageLoadInFlight() {
+        return _pageLoadStartedAt > 0 &&
+               (Date.now() - _pageLoadStartedAt) < PAGE_LOAD_TIMEOUT_MS;
+    }
+
     /* Helper: is a video canvas background currently active? */
     function _isVideoBg() {
         try {
@@ -51,6 +64,22 @@ var CanvasAction = (function () {
     function _hasAnimation(el) {
         return !!(el.animation && el.animation.enabled &&
                   el.animation.type && el.animation.type !== 'none');
+    }
+
+    /* Helper: does this element define any hover styling?
+       Hover (hoverBackgroundColor / hoverTextColor / hoverText / hoverIcon) is
+       applied by updateFocusOverlays() via the card's data-el-key DOM overlay.
+       Canvas-drawn cards have no data-el-key, so an element with hover styling
+       MUST be rendered as a DOM overlay for hover to take effect — even on a
+       solid-color background with no animation.                               */
+    function _hasHover(el) {
+        return !!(
+            (el.hoverBackgroundColor && el.hoverBackgroundColor !== 'transparent' &&
+             el.hoverBackgroundColor !== '#00000000') ||
+            (el.hoverTextColor) ||
+            (el.hoverText && String(el.hoverText).trim() !== '') ||
+            (el.hoverIcon && String(el.hoverIcon).trim() !== '')
+        );
     }
 
     /* ================================================================
@@ -87,8 +116,8 @@ var CanvasAction = (function () {
            This fixes the "dual / shows on original position then animates"
            issue and the "text disappears" issue when animation is enabled.  */
         var _willUseDomOverlay = hasHlsVideo || hasVideo ||
-            ((hasImage || hasImgData) && (_isVideoBg() || _isImageBg() || _hasAnimation(el))) ||
-            (!hasAnyMedia && (_isVideoBg() || _isImageBg() || _hasAnimation(el)));
+            ((hasImage || hasImgData) && (_isVideoBg() || _isImageBg() || _hasAnimation(el) || _hasHover(el))) ||
+            (!hasAnyMedia && (_isVideoBg() || _isImageBg() || _hasAnimation(el) || _hasHover(el)));
 
         /* -- Step 1 : draw solid background on canvas (canvas-drawn only) */
         if (!_willUseDomOverlay) {
@@ -176,7 +205,7 @@ var CanvasAction = (function () {
         } else if (hasImage) {
             var src = Array.isArray(el.backgroundImage)
                 ? el.backgroundImage[0] : el.backgroundImage;
-            if (_isVideoBg() || _isImageBg() || _hasAnimation(el)) {
+            if (_isVideoBg() || _isImageBg() || _hasAnimation(el) || _hasHover(el)) {
                 createActionDomOverlay(el, src);
             } else {
                 loadAndDrawActionBackground(ctx, el, src, 'url');
@@ -186,7 +215,7 @@ var CanvasAction = (function () {
             var src = el.imageData.indexOf('data:') === 0
                 ? el.imageData
                 : 'data:image/png;base64,' + el.imageData;
-            if (_isVideoBg() || _isImageBg() || _hasAnimation(el)) {
+            if (_isVideoBg() || _isImageBg() || _hasAnimation(el) || _hasHover(el)) {
                 createActionDomOverlay(el, src);
             } else {
                 loadAndDrawActionBackground(ctx, el, src, 'base64');
@@ -198,7 +227,7 @@ var CanvasAction = (function () {
                is covered by the background overlay so pixels are hidden.
                Also force DOM when animation is enabled — canvas-drawn pixels
                cannot be CSS-animated.                                         */
-            if (_isVideoBg() || _isImageBg() || _hasAnimation(el)) {
+            if (_isVideoBg() || _isImageBg() || _hasAnimation(el) || _hasHover(el)) {
                 createActionButtonDomOverlay(el);
             } else {
                 drawActionIcon(ctx, el, function () {
@@ -458,10 +487,14 @@ var CanvasAction = (function () {
         });
 
         video.addEventListener('suspend', function () {
+            if (video._cvDisposed) return;
             console.warn('[CanvasAction] Video suspended:', elementId);
             /* retry loading if not started yet */
             if (!started) {
                 setTimeout(function () {
+                    /* Card removed / page left in the meantime — do not reload */
+                    if (video._cvDisposed || !video.parentNode ||
+                        !video.parentNode.parentNode) return;
                     if (!started) {
                         console.log('[CanvasAction] Retrying after suspend:', elementId);
                         video.load();
@@ -472,6 +505,9 @@ var CanvasAction = (function () {
         });
 
         video.addEventListener('error', function () {
+            /* Silent once disposed: cleanupVideos() releases the source, which
+               itself fires this event. */
+            if (video._cvDisposed) return;
             var code = video.error ? video.error.code : '?';
             console.error('[CanvasAction] âŒ Video error code', code, 'for:', elementId);
             console.error('[CanvasAction]   src:', src);
@@ -606,8 +642,15 @@ var CanvasAction = (function () {
         for (var i = 0; i < activeVideos.length; i++) {
             var vd = activeVideos[i];
             try {
+                /* Mark disposed FIRST: releasing the source raises an 'error'
+                   event, and the handlers below must stay silent for a card
+                   that is on its way out. */
+                vd.video._cvDisposed = true;
                 vd.video.pause();
-                vd.video.src   = '';
+                while (vd.video.firstChild) vd.video.removeChild(vd.video.firstChild);
+                /* removeAttribute, not src='' — an empty src resolves against
+                   the document URL and makes the TV fetch the page itself. */
+                vd.video.removeAttribute('src');
                 vd.video.load();
             } catch (e) { /* ignore */ }
             if (vd.wrapDiv && vd.wrapDiv.parentNode) {
@@ -1649,68 +1692,201 @@ var CanvasAction = (function () {
             return;
         }
         var el = actionElements[focusedIndex];
-        console.log('[CanvasAction] Execute:', el.actionType, '|', el.actionValue);
         var _eId = el.id !== undefined ? String(el.id) : '';
         var _eNm = el.name !== undefined ? String(el.name) : '';
         _lastFocusedElementId = _eId + (_eNm ? ('_' + _eNm) : '') || null;
 
-        if      (el.actionType === 'app')         handleAppAction(el);
-        else if (el.actionType === 'dynamicPage') handleDynamicPageAction(el);
-        else if (el.actionType === 'url')         handleUrlAction(el);
-        else console.warn('[CanvasAction] Unknown actionType:', el.actionType);
+        /* ── navTimer autoplay hand-off ──────────────────────────────────
+           If this card targets one of the navTimer sequence steps, the chain
+           JOINS the guest at that step: the page opens through the autoplay
+           runner, so that step's dwell and isLast rules apply from there on
+           (press "Cricket" -> Cricket, dwell -> Hotel, dwell -> Lion/isLast).
+           adoptAction() returns true only when it took over the navigation. */
+        try {
+            if (typeof CanvasNavTimer !== 'undefined' && CanvasNavTimer.adoptAction &&
+                CanvasNavTimer.adoptAction(el)) {
+                console.log('[CanvasAction] Navigation handed to the navTimer autoplay sequence');
+                return;
+            }
+        } catch (e) {
+            console.warn('[CanvasAction] adoptAction threw:', e);
+        }
+
+        /* Unrelated target — the guest is leaving the chain / countdown, so
+           stop it: it must not yank them away from the page they just chose. */
+        try {
+            if (typeof CanvasNavTimer !== 'undefined' && CanvasNavTimer.cancelAutoplay) {
+                CanvasNavTimer.cancelAutoplay('guest pressed OK on a card');
+            }
+        } catch (e) {}
+
+        /* ── ttl navTimer page ───────────────────────────────────────────
+           A page with a ttl navTimer is an auto-advance page: the timer's own
+           navigation drops the route history, so a card press on that page
+           does the same. The guest simply pressed OK a moment before the
+           countdown would have moved on for them — either way the target
+           becomes the route root and BACK/EXIT goes to the home screen. */
+        var _navOpts = null;
+        try {
+            if (typeof CanvasNavTimer !== 'undefined' &&
+                CanvasNavTimer.clearsHistoryOnAction &&
+                CanvasNavTimer.clearsHistoryOnAction()) {
+                _navOpts = { clearRouteHistory: true };
+                console.log('[CanvasAction] ttl navTimer page — target becomes the route root');
+            }
+        } catch (e) {}
+
+        executeElementAction(el, _navOpts);
     }
 
-    function handleAppAction(el) {
+    /**
+     * Run the actionType / actionValue of ANY element — no focus required.
+     *
+     * Shared by executeAction() (OK pressed on the focused card) and by
+     * CanvasNavTimer, so an auto-navigation timer follows the exact same
+     * code path as a manual key press (dynamicPage history push, line
+     * loader, cleanup + re-render, app launch, …).
+     *
+     * Deliberately does NOT touch _lastFocusedElementId: a timer-driven
+     * navigation must not overwrite which card the guest had focused.
+     *
+     * opts (all optional, used by CanvasNavTimer):
+     *   clearRouteHistory : true  → the target template becomes the route
+     *                               root; every previously visited canvas
+     *                               page is dropped even when the target's
+     *                               is_clear_route_history is false.
+     *   onNavigated       : fn    → called once the target template has been
+     *                               painted (autoplay uses it to start the
+     *                               dwell clock only when the page is up).
+     *   onFailed          : fn    → called when the navigation could not be
+     *                               completed (API/parse/network error).
+     */
+    function executeElementAction(el, opts) {
+        if (!el) { console.warn('[CanvasAction] executeElementAction: no element'); return; }
+        console.log('[CanvasAction] Execute:', el.actionType, '|', el.actionValue);
+
+        if      (el.actionType === 'app')         handleAppAction(el, opts);
+        else if (el.actionType === 'dynamicPage') handleDynamicPageAction(el, opts);
+        else if (el.actionType === 'url')         handleUrlAction(el);
+        else {
+            console.warn('[CanvasAction] Unknown actionType:', el.actionType);
+            if (opts && typeof opts.onFailed === 'function') {
+                try { opts.onFailed(); } catch (e) {}
+            }
+        }
+    }
+
+    function handleAppAction(el, opts) {
         var appId = el.actionValue;
+
+        /* A navTimer-driven launch passes clearRouteHistory: the guest never
+           chose this navigation, so there is nothing to go "back" to — BACK
+           out of the app must land on the home screen, not on the template
+           that auto-launched it (which would restart its countdown and
+           launch the app all over again). Handled below, once we know the
+           launch is actually going ahead. */
+        var _routeRoot = !!(opts && opts.clearRouteHistory);
+
+        /* The template stores the platform-neutral `app_url` in actionValue
+           (e.g. "com.guest.free.tv"), but every launch path in this app keys
+           off `lg_app_id` (e.g. "LIVETV") — see Navigation.homePageNavigation,
+           which dispatches on the lg_app_id it puts in the appUrl attribute.
+           So look actionValue up in Main.homePageData by app_url and switch to
+           that entry's lg_app_id. The same app_url repeats once per language
+           with the same lg_app_id, so the first match is enough.
+           No match (data not loaded yet, or actionValue already an lg_app_id)
+           leaves appId untouched. */
+        try {
+            var _hpd = (typeof Main !== 'undefined' && Array.isArray(Main.homePageData))
+                       ? Main.homePageData : [];
+            var _needle = String(appId || '').trim();
+            for (var _i = 0; _i < _hpd.length; _i++) {
+                var _app = _hpd[_i];
+                if (!_app || !_app.lg_app_id) continue;
+                if (String(_app.app_url || '').trim() !== _needle) continue;
+                console.log('[CanvasAction] Resolved app_url', appId, '-> lg_app_id', _app.lg_app_id);
+                appId = _app.lg_app_id;
+                break;
+            }
+        } catch (_e) {
+            /* fail-open: keep the original actionValue */
+            console.warn('[CanvasAction] lg_app_id lookup failed:', _e);
+        }
+
         console.log('[CanvasAction] Launching app:', appId);
 
         var handlers = {
             /* SAMSUNG: tizen.application.launch(appId, onSuccess, onError).
-               The LG numeric IDs above are webOS-only - these are the Tizen
-               package IDs for the same services on Samsung TVs. */
+               The LG numeric IDs (hcap.preloadedApplication) are webOS-only -
+               these are the Tizen package IDs for the same services on Samsung
+               TVs. tizen.application.* throws synchronously on bad input, so
+               each launch is wrapped in try/catch. */
             'Netflix': function () {
-                if (typeof tizen !== 'undefined' && tizen.application) {
-                    try {
-                        var netflixData = [new tizen.ApplicationControlData(
-                            'payload', ['reason=launcher&hotel_id=GRE1234&launcher_version=1.0'])];
-                        var netflixCtrl = new tizen.ApplicationControl(
-                            'http://tizen.org/appcontrol/operation/default',
-                            null, null, null, netflixData);
-                        tizen.application.launchAppControl(netflixCtrl, '3201907018807',
-                            function () { console.log('[CanvasAction] Netflix launched'); },
-                            function (e) { console.error('[CanvasAction] Netflix fail:', e && e.message); });
-                    } catch (ex) {
-                        console.error('[CanvasAction] Netflix fail:', ex && ex.message);
+                checkNetworkAndLaunch("Netflix" , function () {
+                    try { if (typeof ScreenSaver !== 'undefined') ScreenSaver.clearIdleTimer(); } catch(e) {}
+                    if (typeof tizen !== 'undefined' && tizen.application) {
+                        try {
+                            /* SAMSUNG: launchAppControl() carries the launch payload
+                               that LG passed as a "parameters" JSON string. */
+                            var netflixData = [new tizen.ApplicationControlData(
+                                'payload', ['reason=launcher&hotel_id=GRE1234&launcher_version=1.0'])];
+                            var netflixCtrl = new tizen.ApplicationControl(
+                                'http://tizen.org/appcontrol/operation/default',
+                                null, null, null, netflixData);
+                            tizen.application.launchAppControl(netflixCtrl, '3201907018807',
+                                function () {
+                                    Main.deviceActivity("open","app","Netflix");
+                                    console.log('[CanvasAction] Netflix launched');
+                                },
+                                function (e) { console.error('[CanvasAction] Netflix fail:', e && e.message); });
+                        } catch (ex) {
+                            console.error('[CanvasAction] Netflix fail:', ex && ex.message);
+                        }
                     }
-                }
+                })
+
             },
             'Youtube': function () {
-                if (typeof tizen !== 'undefined' && tizen.application) {
-                    try {
-                        tizen.application.launch('111299001912',
-                            function () { console.log('[CanvasAction] YouTube launched'); },
-                            function (e) { console.error('[CanvasAction] YouTube fail:', e && e.message); });
-                    } catch (ex) {
-                        console.error('[CanvasAction] YouTube fail:', ex && ex.message);
+                checkNetworkAndLaunch("Youtube" , function () {
+                    try { if (typeof ScreenSaver !== 'undefined') ScreenSaver.clearIdleTimer(); } catch(e) {}
+                    if (typeof tizen !== 'undefined' && tizen.application) {
+                        try {
+                            tizen.application.launch('111299001912',
+                                function () {
+                                    Main.deviceActivity("open","app","Youtube");
+                                    console.log('[CanvasAction] YouTube launched');
+                                },
+                                function (e) { console.error('[CanvasAction] YouTube fail:', e && e.message); });
+                        } catch (ex) {
+                            console.error('[CanvasAction] YouTube fail:', ex && ex.message);
+                        }
                     }
-                }
+                })
+
             },
             'accuweather': function () {
-                if (typeof tizen !== 'undefined' && tizen.application) {
-                    try {
-                        tizen.application.launch('3201703014312',
-                            function () { console.log('[CanvasAction] AccuWeather launched'); },
-                            function (e) { console.error('[CanvasAction] AccuWeather fail:', e && e.message); });
-                    } catch (ex) {
-                        console.error('[CanvasAction] AccuWeather fail:', ex && ex.message);
+                checkNetworkAndLaunch("AccuWeather" , function () {
+                    try { if (typeof ScreenSaver !== 'undefined') ScreenSaver.clearIdleTimer(); } catch(e) {}
+                    if (typeof tizen !== 'undefined' && tizen.application) {
+                        try {
+                            tizen.application.launch('3201703014312',
+                                function () {
+                                    Main.deviceActivity("open","app","accuweather");
+                                    console.log('[CanvasAction] AccuWeather launched');
+                                },
+                                function (e) { console.error('[CanvasAction] AccuWeather fail:', e && e.message); });
+                        } catch (ex) {
+                            console.error('[CanvasAction] AccuWeather fail:', ex && ex.message);
+                        }
                     }
-                }
+                })
             },
             'hdmi': function () {
                 if (typeof Main !== 'undefined') {
                     Main.addBackData("MyDevice");
                     view = "MyDevice";
                     presentPagedetails.view = view;
+                    Main.deviceActivity("open","page","MyDevice");
                     if (typeof Util !== 'undefined' && Util.DevicesSwitchPage) Util.DevicesSwitchPage();
                 }
             },
@@ -1720,29 +1896,229 @@ var CanvasAction = (function () {
                     if (typeof macro !== 'undefined' && typeof Util !== 'undefined') {
                         macro("#popUpFDFS").html(Util.clearDataPage());
                         macro("#popupBtn-0").addClass('popupFocus');
+                        Main.deviceActivity("open","page","ClearData");
                     }
                 }
             },
-            'com.guest.chromecast': function () {
-                if (typeof Main !== 'undefined' && Main.handleGoogleCast) Main.handleGoogleCast();
+            'Casting': function () {
+                checkNetworkAndLaunch("Casting", function () {
+                    try { if (typeof ScreenSaver !== 'undefined') ScreenSaver.clearIdleTimer(); } catch(e) {}
+                    if (typeof Main !== 'undefined' && Main.handleGoogleCast) Main.handleGoogleCast();
+                })
             },
             'LGTV': function () {
+                _leaveCanvasForApp('LGTV');
+                Main.deviceActivity("open","app","LGTV");
                 if (typeof Main !== 'undefined' && Main.lgLgChannelIdApi) Main.lgLgChannelIdApi(true);
             },
             'LIVETV': function () {
+                _leaveCanvasForApp('LIVETV');
+                Main.deviceActivity("open","app","LIVETV");
                 if (typeof Main !== 'undefined' && Main.liveTvChannelIdApi) Main.liveTvChannelIdApi(true);
             }
         };
 
-        if (handlers[appId]) handlers[appId]();
-        else console.warn('[CanvasAction] No handler for app:', appId);
+        /* CanvasNavTimer waits on these before it moves on: onNavigated
+           releases its in-flight guard, onFailed ends the chain instead of
+           leaving it stalled until the 31s navigation timeout. */
+        function _report(ok) {
+            if (!opts) return;
+            var cb = ok ? opts.onNavigated : opts.onFailed;
+            if (typeof cb !== 'function') return;
+            try { cb(); } catch (e) { console.warn('[CanvasAction] app callback threw:', e); }
+        }
+
+        if (!handlers[appId]) {
+            console.warn('[CanvasAction] No handler for app:', appId);
+            _report(false);
+            return;
+        }
+
+        /* ── navTimer launch: go home FIRST, then launch ─────────────────
+           This must happen BEFORE the app starts, not after, because the
+           two kinds of app behave completely differently afterwards:
+
+             • Live TV / LG TV / Casting / HDMI render a page inside our web
+               app and push their own back-stack entry. Whatever page is on
+               screen when they launch becomes their BACK destination.
+             • Netflix / YouTube / AccuWeather are separate apps (SAMSUNG:
+               Tizen apps launched via tizen.application). Our page keeps
+               running untouched underneath (backgrounded), and the platform
+               brings it back exactly as it was when the guest presses BACK.
+
+           Unwinding to the home screen first satisfies both at once: the
+           in-app players record HOME as their back destination, and the
+           external apps leave us already sitting on home. No per-app
+           special-casing, and nothing depends on a callback firing later. */
+        if (_routeRoot) _returnHomeBeforeLaunch(appId);
+
+        try {
+            handlers[appId]();
+        } catch (e) {
+            console.error('[CanvasAction] App launch threw:', appId, e);
+            _report(false);
+            return;
+        }
+        _report(true);
     }
 
-    function handleDynamicPageAction(el) {
+    /**
+     * Unwind the canvas view back to the home screen, then leave the screen
+     * free for the app that is about to launch.
+     *
+     * Only ever called for a timer-driven launch — a guest who presses OK on
+     * a card chose that template and must come back to it.
+     */
+    function _returnHomeBeforeLaunch(appId) {
+        console.log('[CanvasAction] navTimer launch of', appId,
+                    '— unwinding before launch so BACK lands on the right page');
+
+        /* Apps that render INSIDE our web app (they push their own addBackData
+           entry). Everything else is a separate (Tizen) app that backgrounds us. */
+        var IN_APP_VIEWS = { 'LGTV': 1, 'LIVETV': 1, 'hdmi': 1};
+
+        try {
+            /* Tear the canvas down before anything is painted, or its overlays
+               and background video would survive on top of the next screen. */
+            _leaveCanvasForApp(appId);
+
+            if (typeof Main === 'undefined') return;
+
+            var _anchor = Main.clearRouteAnchor;
+
+            /* STARTUP-screen mode with a stored is_clear_route_history anchor:
+               land the guest on that anchor when they exit the app, instead of
+               the startup root. Normal ourHotel keeps the original behaviour
+               (unwind to the home screen). */
+            if (Main._isStartupScreenMode && _anchor && _anchor.jsonTemplateData) {
+                Main.jsonTemplateData = _anchor.jsonTemplateData;
+                Main.pageHistory      = [];
+
+                if (!IN_APP_VIEWS[appId]) {
+                    /* External app (Netflix/YouTube/AccuWeather/Casting): the launcher
+                       stays underneath and the platform restores it on BACK — render the
+                       anchor now so that is what the guest returns to, then reset
+                       so its navTimer cannot auto-navigate behind the app. */
+                    try {
+                        if (typeof macro !== 'undefined') {
+                            macro("#mainContent").html('');
+                            if (typeof Util !== 'undefined' && Util.ourHotelPage) {
+                                macro("#mainContent").html(Util.ourHotelPage());
+                                macro("#mainContent").show();
+                            }
+                        }
+                        if (typeof CanvasNavTimer !== 'undefined' && CanvasNavTimer.reset) {
+                            CanvasNavTimer.reset();
+                        }
+                    } catch (e) {}
+                }
+                /* In-app views (LGTV/LIVETV/HDMI/Casting): handlers[appId]() runs
+                   next and calls addBackData() while Main.jsonTemplateData is the
+                   anchor, so their BACK target IS the anchor (re-rendered by
+                   previousPage() on the way out). Nothing to render here. */
+            } else {
+                /* No anchor (or normal ourHotel): original behaviour — unwind to
+                   the home screen / startup root. */
+                Main.pageHistory = [];
+                if (Main.previousPage) Main.previousPage();
+            }
+
+            /* previousPage()/render arms the screen saver. The app is about to
+               take the TV, so that idle timer must not run. */
+            try {
+                if (typeof ScreenSaver !== 'undefined') ScreenSaver.clearIdleTimer();
+            } catch (e) {}
+        } catch (e) {
+            console.warn('[CanvasAction] Return-before-launch failed:', e);
+        }
+    }
+
+    /**
+     * _leaveCanvasForApp(appId)
+     *
+     * Hands the screen over to a full-screen app (Live TV, LG TV, Casting)
+     * that paints on the video plane.
+     *
+     * The canvas page is NOT torn down blindly: Main.addBackData() — called
+     * by the app we are about to launch — saves Main.jsonTemplateData, and
+     * Main.previousPage() re-renders the template from it on the way back.
+     * What must stop here is everything that would otherwise keep running
+     * ON TOP of the app: background videos, weather/RSS/ticker overlays that
+     * live in the DOM rather than on the canvas, and any navTimer countdown
+     * that would navigate the page out from under the guest mid-programme.
+     */
+    function _leaveCanvasForApp(appId) {
+        console.log('[CanvasAction] Leaving canvas for', appId);
+
+        /* A pending autoplay hop must not fire while the guest is watching. */
+        try {
+            if (typeof CanvasNavTimer !== 'undefined' && CanvasNavTimer.cancelAutoplay) {
+                CanvasNavTimer.cancelAutoplay('launching ' + appId);
+            }
+        } catch (e) {}
+
+        /* Overlays + background videos + focus rings. */
+        try {
+            if (typeof CanvasRenderer !== 'undefined' && CanvasRenderer.cleanup) {
+                CanvasRenderer.cleanup();
+            } else {
+                try { if (typeof CanvasBackground !== 'undefined') CanvasBackground.cleanup(); } catch (_) {}
+                cleanup();
+            }
+        } catch (e) {
+            console.warn('[CanvasAction] Canvas cleanup before launch failed:', e);
+        }
+
+        /* bg-video-wrap lives on document.body, outside #mainContent. */
+        try {
+            var _bgWrap = document.getElementById('bg-video-wrap');
+            if (_bgWrap && _bgWrap.parentNode) _bgWrap.parentNode.removeChild(_bgWrap);
+        } catch (e) {}
+    }
+
+    function handleDynamicPageAction(el, opts) {
         var pageUuid = el.actionValue;
         console.log('[CanvasAction] Loading dynamic page:', pageUuid);
 
-        if (typeof Main === 'undefined') { console.error('[CanvasAction] Main missing'); return; }
+        /* Caller options — see executeElementAction() */
+        var _forceClearHistory = !!(opts && opts.clearRouteHistory);
+        var _onNavigated       = (opts && typeof opts.onNavigated === 'function') ? opts.onNavigated : null;
+        var _onFailed          = (opts && typeof opts.onFailed    === 'function') ? opts.onFailed    : null;
+
+        function _notifyFailed() {
+            _releaseLock();
+            if (!_onFailed) return;
+            try { _onFailed(); } catch (e) { console.warn('[CanvasAction] onFailed threw:', e); }
+        }
+
+        if (typeof Main === 'undefined') {
+            console.error('[CanvasAction] Main missing');
+            _notifyFailed();
+            return;
+        }
+
+        /* Already loading a page — ignore the repeat press.
+           Tell the caller directly (NOT via _notifyFailed, whose _releaseLock
+           would clear the lock belonging to the load still in flight) so a
+           navTimer waiting on this navigation recovers immediately instead of
+           sitting on its own in-flight guard until it times out. */
+        if (_pageLoadInFlight()) {
+            console.log('[CanvasAction] Ignored — a page is already loading:', pageUuid);
+            if (_onFailed) {
+                try { _onFailed(); }
+                catch (e) { console.warn('[CanvasAction] onFailed threw:', e); }
+            }
+            return;
+        }
+        _pageLoadStartedAt = Date.now();
+
+        /* Clears the in-flight lock exactly once, whatever the outcome. */
+        var _lockCleared = false;
+        function _releaseLock() {
+            if (_lockCleared) return;
+            _lockCleared = true;
+            _pageLoadStartedAt = 0;
+        }
 
         // ── Push the CURRENT page onto the history stack before navigating away.
         //    We snapshot the full jsonTemplateData object so we can fully restore it
@@ -1794,6 +2170,45 @@ var CanvasAction = (function () {
                         if (result.status === true) {
                             Main.jsonTemplateData = result.result;
 
+                            // ── is_clear_route_history: the template we just loaded
+                            //    becomes the ROOT of the canvas route. Drop every page
+                            //    visited before it — including the entry pushed above —
+                            //    so BACK/EXIT from here does not walk back through the
+                            //    previous templates but leaves the canvas view and
+                            //    returns to the home screen.
+                            //
+                            //    clearRouteHistory in opts forces the very same
+                            //    thing for a navTimer-driven navigation: the guest
+                            //    never chose it, so there is nothing meaningful to
+                            //    go back to — the target is the route root even when
+                            //    its is_clear_route_history is false.
+                            try {
+                                var _cleared = false;
+                                if (typeof Main.applyClearRouteHistory === 'function') {
+                                    _cleared = Main.applyClearRouteHistory(result.result);
+                                } else if (result.result &&
+                                           result.result.is_clear_route_history === true) {
+                                    Main.pageHistory = [];
+                                    _cleared = true;
+                                }
+                                if (!_cleared && _forceClearHistory) {
+                                    // STARTUP-screen final destination: keep the
+                                    // is_clear_route_history anchor as the single
+                                    // back entry so BACK/EXIT returns to it instead
+                                    // of being a dead-end. Normal ourHotel is left
+                                    // exactly as before (history emptied → home).
+                                    if (Main._isStartupScreenMode &&
+                                        typeof Main.clearHistoryToAnchor === 'function') {
+                                        Main.clearHistoryToAnchor();
+                                    } else {
+                                        Main.pageHistory = [];
+                                    }
+                                    console.log('[CanvasAction] clearRouteHistory requested by caller ' +
+                                                '→ route history cleared; template ' + pageUuid +
+                                                ' is now the route root');
+                                }
+                            } catch (_ch) {}
+
                             // ── Clean up the current canvas page before rendering
                             //    the new one so videos, overlays and clocks from the
                             //    previous page don't leak into the next page.
@@ -1815,14 +2230,25 @@ var CanvasAction = (function () {
                             // Restore backgrounds (may have been set transparent for video mode)
                             try { document.body.style.background = ''; } catch(_e) {}
 
-                            // ── Pass hideLoadingAfterMinTime as onReady so the line loader
-                            //    completes only AFTER the bg image/video is fully painted.
+                            // ── Pass _onRendered as onReady so the line loader completes
+                            //    only AFTER the bg image/video is fully painted — and so
+                            //    the caller (autoplay dwell clock) starts counting from
+                            //    the moment the template is actually on screen.
+                            var _onRendered = function () {
+                                _releaseLock();          // new page is up — OK works again
+                                hideLoadingAfterMinTime();
+                                if (_onNavigated) {
+                                    try { _onNavigated(); }
+                                    catch (e) { console.warn('[CanvasAction] onNavigated threw:', e); }
+                                }
+                            };
+
                             macro("#mainContent").html('');
                             if (typeof Util !== 'undefined' && Util.ourHotelPage) {
-                                macro("#mainContent").html(Util.ourHotelPage(hideLoadingAfterMinTime));
+                                macro("#mainContent").html(Util.ourHotelPage(_onRendered));
                                 macro("#mainContent").show();
                             } else {
-                                hideLoadingAfterMinTime();
+                                _onRendered();
                             }
 
                         } else {
@@ -1832,6 +2258,7 @@ var CanvasAction = (function () {
                                 Main.pageHistory.pop();
                             }
                             hideLoadingAfterMinTime();
+                            _notifyFailed();
                         }
                     } catch (e) {
                         console.error('[CanvasAction] Parse error:', e);
@@ -1840,6 +2267,7 @@ var CanvasAction = (function () {
                             Main.pageHistory.pop();
                         }
                         hideLoadingAfterMinTime();
+                        _notifyFailed();
                     }
                 },
                 error: function (err) {
@@ -1864,9 +2292,17 @@ var CanvasAction = (function () {
                         Main.pageHistory.pop();
                     }
                     hideLoadingAfterMinTime();
+                    _notifyFailed();
                 },
                 timeout: 30000
             });
+        } else {
+            console.error('[CanvasAction] macro/ajax unavailable — cannot load page:', pageUuid);
+            if (Array.isArray(Main.pageHistory) && Main.pageHistory.length > 0) {
+                Main.pageHistory.pop();
+            }
+            hideLoadingAfterMinTime();
+            _notifyFailed();
         }
     }
 
@@ -1935,6 +2371,7 @@ var CanvasAction = (function () {
         initializeNavigation: initializeNavigation,
         moveFocus:            moveFocus,
         executeAction:        executeAction,
+        executeElementAction: executeElementAction,
         getFocusedElement:    getFocusedElement,
         cleanup:              cleanup
     };

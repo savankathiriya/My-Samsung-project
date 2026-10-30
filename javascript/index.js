@@ -1,7 +1,7 @@
 var app = {}
 var macro = jQuery.noConflict();
 var appConfig = {
-	appVersion:"v1.1290"
+	appVersion:"v1.1310"
 };
 var loadFilePaths = 'macrotv.json';
 var apiPrefixUrl = "https://tvapi.guestxp.com/app/";
@@ -743,6 +743,22 @@ app.initialize = function() {
 			Main.processTrigger(e);
 		}
 	});
+
+	// Diagnostic-only hook for the startup-screen-only long-press gesture
+	// (see Navigation._tickStartupLongPress/_cancelStartupLongPress in
+	// navigation.js). It does NOT reset the long-press timing — the gap
+	// check inside _tickStartupLongPress is what decides whether a hold is
+	// still continuous, since some remotes fire a keyup between repeat
+	// ticks even while the button stays physically held. No-op for every
+	// other key and every other view/page.
+	window.addEventListener('keyup', function(e) {
+		try {
+			var kc = getKeyCode(e).keycode;
+			if (kc === tvKeyCode.ArrowUp && typeof Navigation !== 'undefined' && Navigation._cancelStartupLongPress) {
+				Navigation._cancelStartupLongPress();
+			}
+		} catch (ex) {}
+	});
 }
 
 app.appPreLoad = function() {
@@ -1024,48 +1040,62 @@ document.addEventListener('power_mode_changed', function(event) {
   }
 })
 
-document.addEventListener('output_connection_changed', function(event) {
-  console.log("output_connection_changed ----->", event);
-
-  // SAMSUNG: hospitality panels have no HDMI OUT and Tizen exposes no
-  // getHdmiOutStatus equivalent. The event itself carries the state, so we
-  // read it from the event rather than querying the platform.
-  var hdmiCableStatus = (event && event.connected) ? "connected" : "disconnected";
-  console.log("HDMI status from event:", hdmiCableStatus);
-
-  if (hdmiCableStatus === "disconnected") {
-      macro("#mainContent").html('');
-      macro("#mainContent").html(Util.customHdmiDisconnectedPage());
-      macro("#mainContent").show();
-
-  } else if (hdmiCableStatus === "connected" && macro("#mainContent").find(".customHdmiDisconnectedPage").length > 0) {
-    gotoHomeSCreenFromDisconnectPage();
-  }
-
-  // API update
-  updateCurrentNetworkType(function() {
-    var payload = {
-      device_status_info: {
-        hdmi_cable_status: hdmiCableStatus || ""
-      }
-    };
-    if (typeof macro !== "undefined" && macro.ajax) {
-      macro.ajax({
-        url: apiPrefixUrl + "device-profile",
-        type: "PATCH",
-        timeout: 20000,
-        data: JSON.stringify(payload),
-        contentType: "application/json; charset=utf-8",
-        headers: {
-          Authorization: "Bearer " + (pageDetails && pageDetails.access_token ? pageDetails.access_token : "")
-        }
-      });
-    }
-  });
-});
+// LG disabled this listener (HDMI OUT status is no longer reported from
+// here). Kept commented to match. SAMSUNG: the event is never dispatched on
+// Tizen anyway - nothing in the app synthesises it.
+// document.addEventListener('output_connection_changed', function(event) {
+//   console.log("output_connection_changed ----->", event);
+//
+//   // SAMSUNG: hospitality panels have no HDMI OUT and Tizen exposes no
+//   // getHdmiOutStatus equivalent. The event itself carries the state, so we
+//   // read it from the event rather than querying the platform.
+//   var hdmiCableStatus = (event && event.connected) ? "connected" : "disconnected";
+//   console.log("HDMI status from event:", hdmiCableStatus);
+//
+//   if (hdmiCableStatus === "disconnected") {
+//       macro("#mainContent").html('');
+//       macro("#mainContent").html(Util.customHdmiDisconnectedPage());
+//       macro("#mainContent").show();
+//
+//   } else if (hdmiCableStatus === "connected" && macro("#mainContent").find(".customHdmiDisconnectedPage").length > 0) {
+//     gotoHomeSCreenFromDisconnectPage();
+//   }
+//
+//   // API update
+//   updateCurrentNetworkType(function() {
+//     var payload = {
+//       device_status_info: {
+//         hdmi_cable_status: hdmiCableStatus || ""
+//       }
+//     };
+//     if (typeof macro !== "undefined" && macro.ajax) {
+//       macro.ajax({
+//         url: apiPrefixUrl + "device-profile",
+//         type: "PATCH",
+//         timeout: 20000,
+//         data: JSON.stringify(payload),
+//         contentType: "application/json; charset=utf-8",
+//         headers: {
+//           Authorization: "Bearer " + (pageDetails && pageDetails.access_token ? pageDetails.access_token : "")
+//         }
+//       });
+//     }
+//   });
+// });
 
 document.addEventListener('hdmi_connection_changed', function(event) {
   console.log("hdmi_connection_changed event:", event);
+
+  // Startup-screen-only bypass: both branches below force navigation away
+  // from whatever is currently on screen (handleHdmiConnection → Home, or
+  // straight to MyDevice) — never let an HDMI connect/disconnect pull the
+  // guest off the startup-screen canvas. Main._isStartupScreenMode is ONLY
+  // set by the startup_screen boot paths, so this is a no-op for the
+  // normal app flow.
+  if (Main._isStartupScreenMode === true) {
+    console.log("[hdmi_connection_changed] Ignored — currently on startup screen");
+    return;
+  }
 
   var hdmiStatus = (event && event.connected) ? "connected" : "disconnected";
 
@@ -1079,38 +1109,39 @@ document.addEventListener('hdmi_connection_changed', function(event) {
       }
 })
 
-document.addEventListener('idcap::mpi_cable_status_changed', function(param) {
-  var mpiStatus = (param && param.connected) ? "connected" : "disconnected";
-  console.log("MPI status changed:", mpiStatus);
-
-  if (mpiStatus === "disconnected") {
-    macro("#mainContent").html('');
-    macro("#mainContent").html(Util.customHdmiDisconnectedPage());
-    macro("#mainContent").show();
-  } else if(mpiStatus === "connected" && macro("#mainContent").find(".customHdmiDisconnectedPage").length > 0) {
-    gotoHomeSCreenFromDisconnectPage();
-  }
-
-  updateCurrentNetworkType(function () {
-    var payload = {
-      device_status_info: {
-        mpi_cable_status: mpiStatus ? mpiStatus : "",
-      }
-    }
-    if (typeof macro !== "undefined" && macro.ajax) {
-      macro.ajax({
-        url: apiPrefixUrl + "device-profile",
-        type: "PATCH",
-        timeout: 20000,
-        data: JSON.stringify(payload),
-        contentType: "application/json; charset=utf-8",
-        headers: {
-          Authorization: "Bearer " + (pageDetails && pageDetails.access_token ? pageDetails.access_token : "")
-        }
-      });
-    }
-  });
-});
+// LG disabled this listener. SAMSUNG: idcap events never fire on Tizen.
+// document.addEventListener('idcap::mpi_cable_status_changed', function(param) {
+//   var mpiStatus = (param && param.connected) ? "connected" : "disconnected";
+//   console.log("MPI status changed:", mpiStatus);
+//
+//   if (mpiStatus === "disconnected") {
+//     macro("#mainContent").html('');
+//     macro("#mainContent").html(Util.customHdmiDisconnectedPage());
+//     macro("#mainContent").show();
+//   } else if(mpiStatus === "connected" && macro("#mainContent").find(".customHdmiDisconnectedPage").length > 0) {
+//     gotoHomeSCreenFromDisconnectPage();
+//   }
+//
+//   updateCurrentNetworkType(function () {
+//     var payload = {
+//       device_status_info: {
+//         mpi_cable_status: mpiStatus ? mpiStatus : "",
+//       }
+//     }
+//     if (typeof macro !== "undefined" && macro.ajax) {
+//       macro.ajax({
+//         url: apiPrefixUrl + "device-profile",
+//         type: "PATCH",
+//         timeout: 20000,
+//         data: JSON.stringify(payload),
+//         contentType: "application/json; charset=utf-8",
+//         headers: {
+//           Authorization: "Bearer " + (pageDetails && pageDetails.access_token ? pageDetails.access_token : "")
+//         }
+//       });
+//     }
+//   });
+// });
 
 function handleMqttCommand(cmd, data, topic) {
   console.log('[MQTT CMD] cmd:', cmd, '| topic:', topic, '| data:', JSON.stringify(data));
@@ -1126,9 +1157,38 @@ function handleMqttCommand(cmd, data, topic) {
       case "screen_saver_off"     : return mqtt_screenSaverOff();
       case "refresh_screensaver"  : return mqtt_refreshScreenSaverData();
       case "get_status"           : return mqtt_sendStatusInfo(data);
+      case "notification"         : return mqtt_showNotification(data);
       case "update_installed_app" : return mqtt_sendInstalledAppInfo(data);
     }
- 
+
+  /**
+   * mqtt_showNotification(data)
+   *
+   * Handles the MQTT "notification" command.
+   * payload.name must match an alert entry name in Main.alertsData.
+   *
+   * Example payload:
+   *   { "cmd": "notification", "seq": "366239", "payload": { "name": "breckfast-time" } }
+   */
+  function mqtt_showNotification(data) {
+    console.log('[MQTT] notification received:', JSON.stringify(data));
+
+    var alertName = data && data.payload && data.payload.name
+                    ? data.payload.name
+                    : null;
+
+    if (!alertName) {
+      console.warn('[MQTT] notification: missing payload.name — ignoring');
+      return;
+    }
+
+    try {
+      Main.showAlertNotification(alertName);
+    } catch (e) {
+      console.error('[MQTT] notification: showAlertNotification error:', e);
+    }
+  }
+
   function mqtt_reboot(data) {
 
     var payload = {
@@ -1144,8 +1204,21 @@ function handleMqttCommand(cmd, data, topic) {
 
     var cmd = (data.cmd || "").toLowerCase().trim();
 
-    // reboot and refresh → full checkout + reboot flow (original behaviour)
-    if (cmd === "reboot" || cmd === "refresh" || cmd === "refresh_app_data") {
+    // refresh → clear all cache then full checkout + reboot
+    if (cmd === "refresh") {
+      console.log('[MQTT] Command "' + cmd + '" — clearing cache then triggering CheckoutManager_requestCheckout');
+      setTimeout(function () {
+        // _clearAllCacheThenCheckout lives in appconfig.js; fall back to the
+        // plain checkout if it is not loaded.
+        if (typeof _clearAllCacheThenCheckout === 'function') {
+          _clearAllCacheThenCheckout();
+        } else {
+          CheckoutManager_requestCheckout();
+        }
+      }, 1500);
+
+    // reboot → full checkout + reboot flow (no cache clear needed)
+    } else if (cmd === "reboot") {
       console.log('[MQTT] Command "' + cmd + '" — triggering CheckoutManager_requestCheckout');
       setTimeout(function () {
         CheckoutManager_requestCheckout();
@@ -1215,9 +1288,15 @@ function handleMqttCommand(cmd, data, topic) {
               // checkin  + screen ON  → nothing extra (already on)
               var wantBlank = null;
 
+              // checkin only wakes the panel when the property has
+              // pms_checkin_tv_on enabled.
+              var pmsCheckinTvOn = !!(Main.deviceProfile &&
+                    Main.deviceProfile.property_detail &&
+                    Main.deviceProfile.property_detail.pms_checkin_tv_on === true);
+
               if (cmd === "checkout" && isScreenOn) {
                 wantBlank = true;
-              } else if (cmd === "checkin" && !isScreenOn) {
+              } else if (pmsCheckinTvOn && cmd === "checkin" && !isScreenOn) {
                 wantBlank = false;
               }
 
@@ -1269,7 +1348,13 @@ function handleMqttCommand(cmd, data, topic) {
           }
 
           function _destroyAppsOnly() {
-            var TARGET_ID = "com.samsung.tv.cobalt-yt";
+            // SAMSUNG: LG destroys each app with
+            // hcap.preloadedApplication.destroyPreloadedApplication({id}). On
+            // Tizen a running app is terminated with tizen.application.kill(),
+            // which takes the app CONTEXT id - so each app id is looked up via
+            // getAppsContext first. Fallback YouTube id is the Samsung Cobalt
+            // package, used when lgSettings carries no youtube_app_id.
+            var SAMSUNG_YOUTUBE_ID = "com.samsung.tv.cobalt-yt";
 
             var finished = false;
             function finish(reason) {
@@ -1279,42 +1364,87 @@ function handleMqttCommand(cmd, data, topic) {
               try { _reloadWelcomeTemplate(); } catch (e) { console.error(e); }
             }
 
+            // SAMSUNG: getAppsContext/kill callbacks are not guaranteed to fire
+            // on every firmware, so never let the teardown hang.
             setTimeout(function () { finish('watchdog'); }, 8000);
 
-            if (!(typeof tizen !== 'undefined' && tizen.application)) {
+            if (!(typeof tizen !== 'undefined' && tizen.application &&
+                  typeof tizen.application.kill === 'function')) {
+              console.warn('[MQTT] tizen.application.kill not available — skipping');
               finish('tizen.application unavailable');
               return;
             }
 
-            tizen.application.getAppsContext(function (contexts) {
-              // Own try/catch: this runs on a later tick, so the caller's catch is gone
-              // and any throw here is UNHANDLED - that is what stopped your log.
-              try {
-                var ctx = null;
-                for (var i = 0; i < contexts.length; i++) {
-                  if (contexts[i].appId === TARGET_ID) { ctx = contexts[i]; break; }
-                }
-                if (!ctx) { finish('youtube not running'); return; }
+            var apps = [
+              { id: Main.lgSettings && Main.lgSettings.netflix_app_id, name: "Netflix" },
+              { id: (Main.lgSettings && Main.lgSettings.youtube_app_id) || SAMSUNG_YOUTUBE_ID, name: "YouTube" }
+            ];
 
-                try {
-                  tizen.application.kill(ctx.id,
-                    function () { console.log('[MQTT] YouTube killed'); finish('killed'); },
-                    function (e) {
-                      console.warn('[MQTT] kill failed:', e && e.name, e && e.message);
-                      finish('kill failed');
-                    });
-                } catch (eKill) {
-                  console.error('[MQTT] kill threw:', eKill && eKill.name, eKill && eKill.message);
-                  finish('kill threw');
-                }
-              } catch (eInner) {
-                console.error('[MQTT] callback exception:', eInner);
-                finish('inner exception');
+            apps = apps.filter(function(app) {
+              if (!app.id) {
+                console.warn('[MQTT] Skipping — no app id for ' + app.name);
+                return false;
               }
-            }, function (e) {
-              console.warn('[MQTT] getAppsContext failed:', e && e.message);
-              finish('getAppsContext error');
+              return true;
             });
+
+            if (!apps.length) {
+              console.warn('[MQTT] No valid app ids — nothing to destroy');
+              finish('no app ids');
+              return;
+            }
+
+            function _destroyNext(index) {
+              if (finished) return;
+              if (index >= apps.length) {
+                console.log('[MQTT] ✅ All apps destruction attempts complete');
+
+                finish('all apps processed');
+                return;
+              }
+
+              var app = apps[index];
+              console.log('[MQTT] Destroying ' + app.name + ' (id: ' + app.id + ')...');
+
+              try {
+                tizen.application.getAppsContext(function (contexts) {
+                  // Own try/catch: this runs on a later tick, so the caller's catch is gone
+                  // and any throw here is UNHANDLED - that is what stopped your log.
+                  try {
+                    var ctx = null;
+                    for (var i = 0; i < contexts.length; i++) {
+                      if (contexts[i].appId === app.id) { ctx = contexts[i]; break; }
+                    }
+                    if (!ctx) {
+                      console.log('[MQTT] ℹ️ ' + app.name + ' not running');
+                      _destroyNext(index + 1);
+                      return;
+                    }
+
+                    tizen.application.kill(ctx.id,
+                      function () {
+                        console.log('[MQTT] ✅ ' + app.name + ' destroyed successfully');
+                        _destroyNext(index + 1);
+                      },
+                      function (e) {
+                        console.warn('[MQTT] kill ' + app.name + ' failed:', e && e.name, e && e.message);
+                        _destroyNext(index + 1);
+                      });
+                  } catch (eInner) {
+                    console.error('[MQTT] Exception destroying ' + app.name + ':', eInner && eInner.name, eInner && eInner.message);
+                    _destroyNext(index + 1);
+                  }
+                }, function (e) {
+                  console.warn('[MQTT] getAppsContext failed:', e && e.message);
+                  _destroyNext(index + 1);
+                });
+              } catch (e) {
+                console.warn('[MQTT] Exception destroying ' + app.name + ':', e && e.name, e && e.message);
+                _destroyNext(index + 1);
+              }
+            }
+
+            _destroyNext(0);
           }
 
           // // ── KEY: clear guest private data first, then terminate apps ──

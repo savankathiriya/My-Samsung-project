@@ -7,6 +7,8 @@ var currentHdmiIndex = null;
 
 var _caLineLoaderRafId = null;   // requestAnimationFrame handle
 var _caLineLoaderDone  = false;  // signals _tick() to stop self-advancing
+var _caLineLoaderSafetyId = null; // forces the bar to complete if nobody hides it
+var _CA_LINE_LOADER_MAX_MS = 15000;
 
 function startHdmiMonitor(type, index) {
     console.log('[HDMI Monitor] Starting monitor for type:', type, 'index:', index);
@@ -197,7 +199,7 @@ utilities.updatingTimeAndDate = function () {
         return num < 10 ? '0' + num : num;
     }
 
-    function formatTimeFromParts(parts, format) {
+    function formatTimeFromParts(parts, format, hasAmPm) {
         var map = {};
         parts.forEach(function (p) {
             map[p.type] = p.value;
@@ -210,49 +212,69 @@ utilities.updatingTimeAndDate = function () {
         var tokens = {
             'hh': pad(hour12),
             'HH': pad(hour24),
+            'h': hour12,
+            'H': hour24,
             'mm': pad(parseInt(map.minute, 10)),
             'ss': pad(parseInt(map.second, 10))
         };
 
-        return format.replace(/hh|HH|mm|ss/g, function (match) {
+        var result = format.replace(/hh|HH|h|H|mm|ss/g, function (match) {
             return tokens[match];
         });
+
+        // Add AM/PM when "a" is present in the original format
+        if (hasAmPm && map.dayPeriod) {
+            result += ' ' + map.dayPeriod;
+        }
+
+        return result;
     }
 
     function updateDateTime() {
 
         // 🔹 Get timezone dynamically
         var timeZone =
-            (Main.deviceProfile && Main.deviceProfile.property_detail.property_timezone)
+            (Main.deviceProfile &&
+                Main.deviceProfile.property_detail &&
+                Main.deviceProfile.property_detail.property_timezone)
                 ? Main.deviceProfile.property_detail.property_timezone
-                : Intl.DateTimeFormat().resolvedOptions().timeZone; // fallback
+                : Intl.DateTimeFormat().resolvedOptions().timeZone;
 
-        // 🔹 Get raw format (HH:mm, hh:mm a, etc.)
+        // Get raw format
         var rawFormat =
-            (Main.templateApiData && Main.templateApiData.time_format)
+            (Main.templateApiData &&
+                Main.templateApiData.time_format)
                 ? Main.templateApiData.time_format
                 : 'HH:mm';
 
-        // Remove AM/PM if present (you already wanted this)
+        // Check whether AM/PM is present
+        var hasAmPm = /a/i.test(rawFormat);
+
+        // Remove AM/PM from format because we add it separately
         var timeFormat = rawFormat.replace(/\s*[aA]$/, '');
 
-        // Determine if 12-hour format is needed
-        var is12Hour = rawFormat.toLowerCase().indexOf('hh') !== -1;
+        // Determine 12-hour format
+        // h or hh means 12-hour format
+        var is12Hour = /h/.test(timeFormat);
 
-        // ðŸ”¹ Get time parts for the given timezone
+        // Get timezone-aware time
         var timeFormatter = new Intl.DateTimeFormat('en-US', {
             timeZone: timeZone,
             hour: 'numeric',
             minute: 'numeric',
             second: 'numeric',
-            hour12: false  // Always get 24-hour first, we'll convert if needed
+            hour12: hasAmPm || is12Hour
         });
 
         var timeParts = timeFormatter.formatToParts(new Date());
 
-        var timeStr = formatTimeFromParts(timeParts, timeFormat);
+        var timeStr = formatTimeFromParts(
+            timeParts,
+            timeFormat,
+            hasAmPm
+        );
 
-        // 🔹 Date (timezone-aware)
+        // Date (timezone-aware)
         var dateFormatter = new Intl.DateTimeFormat(undefined, {
             timeZone: timeZone,
             weekday: 'long',
@@ -262,12 +284,17 @@ utilities.updatingTimeAndDate = function () {
 
         var dateStr = dateFormatter.format(new Date());
 
-        // 🔹 Update DOM
+        // Update DOM
         var timeEl = document.getElementById("time_now");
         var dateEl = document.getElementById("date_now");
 
-        if (timeEl) timeEl.textContent = timeStr;
-        if (dateEl) dateEl.textContent = dateStr;
+        if (timeEl) {
+            timeEl.textContent = timeStr;
+        }
+
+        if (dateEl) {
+            dateEl.textContent = dateStr;
+        }
     }
 
     // Initial call
@@ -292,43 +319,59 @@ utilities.genricPopup=function(msg,type){
 }
 
 function exitLiveTv() {
+  // SAMSUNG: stops avplay (IPTV) AND hides the tuner window (RF).
+  // Without tvwindow.hide() an RF channel stays on screen behind the app.
   try {
-      // SAMSUNG: an IP (UDP/RTP) channel runs through avplay, so stop + close
-      // is what actually tears Live TV down. tizen.tvchannel has no "stop" -
-      // an RF channel keeps running on the tuner until the source changes.
-      if (typeof webapis !== "undefined" && webapis.avplay) {
+      if (typeof LiveTv !== "undefined") { LiveTv.stop(); }
+      else if (typeof webapis !== "undefined" && webapis.avplay) {
           try { webapis.avplay.stop(); } catch (e) {}
           try { webapis.avplay.close(); } catch (e) {}
-          window._currentHcapMedia = null;
-          console.log(" Live TV stopped successfully");
-      } else {
-          console.warn("webapis.avplay is not available");
       }
+      window._currentHcapMedia = null;
+      console.log(" Live TV stopped successfully");
   } catch (e) {
-      console.error(" avplay stop/close error in exitLiveTv: " + e.message);
+      console.error(" exitLiveTv error: " + e.message);
   }
 }
 
-function launchApp(appId,source) {
+function launchApp(appId, source, attempt) {
     // SAMSUNG: tizen.application.launch(appId, onSuccess, onError).
+    attempt = attempt || 0;
     try {
         if (!(typeof tizen !== "undefined" && tizen.application)) {
             console.log("tizen.application not available - cannot launch", appId);
+            Main.HideLoading();
             return;
         }
 
         tizen.application.launch(appId,
             function () {
+                Main.HideLoading();
                 console.log(" App launched successfully:", appId);
             },
             function (err) {
-                // NOTE: the LG version retried indefinitely here, which spins
-                // forever when the package genuinely is not installed.
+                // Bounded retry (max 4 extra attempts) - an unbounded retry
+                // spins forever when the package genuinely is not installed.
                 console.log(" Failed to launch app:", appId, err && err.message);
+                if (attempt < 4) {
+                    launchApp(appId, source, attempt + 1);
+                } else {
+                    Main.HideLoading();
+                }
             });
     } catch (e) {
+        Main.HideLoading();
         console.log("Exception while launching app:", e.message);
     }
+}
+
+function installApp(appId, source) {
+    // SAMSUNG: LG used idcap://application/install here. A Tizen application
+    // cannot install another package - provisioning goes through Seller
+    // Office / Tizen Business Manager. Log and release the loading overlay.
+    console.warn(" Cannot install " + appId + " from the app on Samsung - "
+        + "provision it through Seller Office / TBM.");
+    Main.HideLoading();
 }
 
 function ensureAppInstalled(appId, source) {
@@ -349,28 +392,39 @@ function ensureAppInstalled(appId, source) {
                     if (apps[i].id === appId) { foundApp = apps[i]; break; }
                 }
 
+                Main.ShowLoading();
+
                 console.log("installed app count------------------->", apps.length);
-                console.log("installed app list------------------->", apps);
 
                 if (foundApp) {
                     console.log(" " + appId + " already installed.");
                     launchApp(appId, source);
                 } else {
-                    console.log(" " + appId + " not found in apps list.");
+                    // LG installs the missing app here; installApp() explains
+                    // why Samsung cannot and hides the loader.
+                    console.log(" " + appId + " not found in installed apps.");
+                    installApp(appId, source);
                 }
             },
             function (err) {
                 console.log("Failed to get app list:", err && err.message);
+                Main.HideLoading();
             });
     } catch (e) {
         console.log("Exception while getting app list:", e.message);
+        Main.HideLoading();
     }
 }
 
 function rebootTv(){
-    // SAMSUNG: no cast-token registration and no app installation step exist,
-    // so this reduces to running the checkout + reboot flow directly.
+    // Step 1: Register Google Cast token (required after each reboot).
+    // SAMSUNG: registerGoogleCastToken() is a no-op that only flags the state
+    // (googlecast.js), and the LG cast-app install step does not exist -
+    // apps cannot install packages on Tizen - so it goes straight to reboot.
     Main.ShowLoading();
+    if(typeof Main !== 'undefined' && Main.registerGoogleCastToken) {
+        Main.registerGoogleCastToken();
+    }
 
     setTimeout(function () {
         if (typeof webapis !== 'undefined' &&
@@ -383,6 +437,169 @@ function rebootTv(){
             Main.HideLoading();
         }
     }, 1000);
+}
+
+
+/* ================================================================
+   CHECKOUT → SHOW THANK-YOU → CLEAR SESSIONS → DESTROY APPS → POWER OFF
+   ----------------------------------------------------------------
+   Does NOT call CheckoutManager_requestCheckout() (that wrapper ends
+   in a reboot). It does the checkout WITHOUT the reboot:
+     1. Renders Util.checkoutThankYouScreen()
+     2. Clears the guest's private app data (LG: hcap.checkout.requestCheckout,
+        SAMSUNG: webapis.systemcontrol.deleteAppPrivateInfoNow) — the call
+        that actually terminates the guest's Netflix / YouTube sessions and
+        clears their credentials. Killing the app alone only stops the
+        running process; it does NOT clear the logged-in data.
+     3. Kills the Netflix / YouTube apps
+     4. Powers the TV OFF — no reboot
+        SAMSUNG: there is no app-level power-off; powerOffFallback()
+        (checkoutManage.js) blanks the panel and exits the app instead.
+   Same no-reboot checkout pattern used in Main.guestInfoAfterInterval.
+================================================================ */
+function checkoutDestroyThenPowerOff() {
+
+    var POWER_OFF_DELAY_MS = 5000; // keep thank-you screen visible before power off
+
+    // ── 1. Show the thank-you screen ──────────────────────────────
+    try {
+        macro("#mainContent").html("");
+        macro("#mainContent").html(Util.checkoutThankYouScreen());
+    } catch (e) {
+        console.warn("[Checkout] Failed to render thank-you screen:", e);
+    }
+
+    // ── 4. Power OFF (not reboot) — invoked once destroy settles ───
+    function _powerOff() {
+        setTimeout(function () {
+            // SAMSUNG: LG called hcap.power.powerOff. Tizen exposes no
+            // app-level power-off, so reuse checkoutManage.js's fallback
+            // (screensaver blank + app exit).
+            if (typeof powerOffFallback === "function") {
+                try {
+                    powerOffFallback(function () {
+                        console.log("PowerOff fallback done after checkout");
+                    });
+                } catch (e) {
+                    console.warn("PowerOff fallback failed after checkout", e);
+                }
+            } else {
+                console.warn("[Checkout] powerOffFallback not available");
+            }
+        }, POWER_OFF_DELAY_MS);
+    }
+
+    // ── 3. Destroy running apps, then power off ───────────────────
+    function _destroyAppsThenPowerOff() {
+        // SAMSUNG: kill via tizen.application.getAppsContext + kill()
+        // (same as destroyAppsThenReboot in checkoutManage.js) instead of
+        // hcap.preloadedApplication.destroyPreloadedApplication.
+        if (!(typeof tizen !== "undefined" &&
+              tizen.application &&
+              typeof tizen.application.getAppsContext === "function" &&
+              typeof tizen.application.kill === "function")) {
+            console.warn("[Checkout] tizen.application.kill not available — powering off");
+            _powerOff();
+            return;
+        }
+
+        var apps = [
+            { id: Main.lgSettings && Main.lgSettings.netflix_app_id, name: "Netflix" },
+            { id: Main.lgSettings && Main.lgSettings.youtube_app_id, name: "YouTube" }
+        ].filter(function (app) {
+            if (!app.id) {
+                console.warn("[Checkout] Skipping — no app id for " + app.name);
+                return false;
+            }
+            return true;
+        });
+
+        if (!apps.length) {
+            console.warn("[Checkout] No valid app ids — powering off");
+            _powerOff();
+            return;
+        }
+
+        var remaining = apps.length;
+
+        function _done() {
+            remaining--;
+            if (remaining <= 0) {
+                console.log("[Checkout] ✅ All app destruction attempts complete");
+                _powerOff();
+            }
+        }
+
+        apps.forEach(function (app) {
+            try {
+                tizen.application.getAppsContext(function (contexts) {
+                    var ctx = null;
+                    for (var i = 0; i < contexts.length; i++) {
+                        if (contexts[i].appId === app.id) { ctx = contexts[i]; break; }
+                    }
+                    if (!ctx) {
+                        console.log("ℹ️ " + app.name + " not running");
+                        _done();
+                        return;
+                    }
+                    tizen.application.kill(ctx.id,
+                        function () {
+                            console.log("✅ " + app.name + " destroyed");
+                            _done();
+                        },
+                        function () {
+                            console.log("ℹ️ " + app.name + " not running");
+                            _done();
+                        });
+                }, function () {
+                    _done();
+                });
+            } catch (e) {
+                console.warn("[Checkout] Exception destroying " + app.name + ":", e);
+                _done();
+            }
+        });
+    }
+
+    // ── 2. Clear sessions FIRST (this is what wipes the guest data) ──
+    // Without it, the apps report "not running" but still hold the previous
+    // guest's credentials. This is the low-level checkout call — NOT
+    // CheckoutManager_requestCheckout(), so there is no reboot afterwards.
+    // SAMSUNG: webapis.systemcontrol.deleteAppPrivateInfoNow() replaces
+    // hcap.checkout.requestCheckout (Tizen 9.0+, may be absent on 6.5).
+    if (typeof webapis !== "undefined" &&
+        webapis.systemcontrol &&
+        typeof webapis.systemcontrol.deleteAppPrivateInfoNow === "function") {
+
+        console.log("[Checkout] Calling deleteAppPrivateInfoNow (no reboot)...");
+
+        // SAMSUNG: the API takes a success callback only - guard against it
+        // never firing so the TV does not sit on the thank-you screen.
+        var _cleared = false;
+        var _afterClear = function () {
+            if (_cleared) return;
+            _cleared = true;
+            _destroyAppsThenPowerOff();
+        };
+        setTimeout(function () {
+            if (!_cleared) console.warn("[Checkout] deleteAppPrivateInfoNow timed out — destroying apps anyway");
+            _afterClear();
+        }, 10000);
+
+        try {
+            webapis.systemcontrol.deleteAppPrivateInfoNow(function (data) {
+                console.log("[Checkout] ✅ private guest data deleted — now destroying apps", data);
+                _afterClear();
+            });
+        } catch (e) {
+            console.warn("[Checkout] Exception in deleteAppPrivateInfoNow:", e, "— destroying apps anyway");
+            _afterClear();
+        }
+
+    } else {
+        console.warn("[Checkout] deleteAppPrivateInfoNow not available — destroying apps directly");
+        _destroyAppsThenPowerOff();
+    }
 }
 
 
@@ -449,11 +666,20 @@ function resolvePlaceholders(text) {
         "{{propertyAddress}}": prop.address      || null,
         "{{propertyState}}":   prop.state        || null,
         "{{propertyCountry}}": prop.country      || null,
-        "{{roomNumber}}":      roomNum           || null
+        "{{roomNumber}}":      roomNum           || null,
+        "{{name}}":            prop.name         || null,
+        "{{address}}":         prop.address      || null,
+        "{{city}}":            prop.city         || null,
+        "{{state}}":           prop.state        || null,
+        "{{country}}":         prop.country      || null,
+        "{{g_room_number}}":   roomNum           || null,
+        "{{g_name}}":          guest.g_name      || null,
+        "{{g_checkin}}":       guest.g_checkin   || null,
+        "{{g_checkout}}":      guest.g_checkout  || null
     };
 
     // Find which tokens are present in the text
-    var tokenRegex = /\{\{[a-zA-Z]+\}\}/g;
+    var tokenRegex = /\{\{[a-zA-Z0-9_]+\}\}/g;
     var tokensInText = text.match(tokenRegex) || [];
 
     // If text has no placeholders, return as-is
@@ -636,18 +862,22 @@ function gotoHomeSCreenFromDisconnectPage() {
  * Now delegates to the modular canvas rendering system
  * ====================================================================
  */
-function renderTemplateCanvas() {
+// NOTE: canvas-renderer.js also assigns window.renderTemplateCanvas. Scripts are
+// injected dynamically, so either definition may win depending on download
+// order — this one must forward onReady too, or the line loader never completes.
+function renderTemplateCanvas(onReady) {
     console.log('[appconfig] Calling CanvasRenderer.render()');
-    
+
     try {
         // Check if CanvasRenderer is available
         if (typeof CanvasRenderer === 'undefined') {
             console.error('[appconfig] CanvasRenderer not loaded! Check script includes.');
+            if (typeof onReady === 'function') onReady();
             return;
         }
-        
+
         // Delegate to the modular rendering system
-        CanvasRenderer.render();
+        CanvasRenderer.render(onReady);
         
         // Optional: Start animation loop for dynamic content (clocks, etc.)
         // Uncomment if you want continuous updates
@@ -708,6 +938,81 @@ function checkNetworkAndLaunch(appName, launchFn) {
         // Fail-open: if the check itself fails, still allow launch
         launchFn();
     }
+}
+
+/**
+ * _clearAllCacheThenCheckout()
+ *
+ * Clears ALL locally cached data (localStorage keys + IndexedDB "AppCacheDB")
+ * then calls CheckoutManager_requestCheckout() so the TV reboots fresh.
+ *
+ * Called when a "refresh" command is received via MQTT
+ * or guestInfoAfterInterval, ensuring the next boot does a full API download
+ * instead of re-using stale cache.
+ */
+function _clearAllCacheThenCheckout() {
+  console.log('[Cache Clear] Starting full cache clear before checkout...');
+
+  // ── 1. Clear all relevant localStorage keys ──────────────────────────
+  var cacheKeys = [
+    'cachedPageDetails',
+    'cachedTemplateApiData',
+    'cachedGuestInfoData',
+    'cachedDeviceProfile',
+    'cachedHomePageData',
+    'cachedWeatherDetails',
+    'liveTvChannelIdDetails',
+    'liveTvChannelMetaDetails',
+    'cachedLgSettings'
+  ];
+
+  cacheKeys.forEach(function (key) {
+    try {
+      localStorage.removeItem(key);
+      console.log('[Cache Clear] Removed localStorage key: ' + key);
+    } catch (e) {
+      console.warn('[Cache Clear] Failed to remove localStorage key "' + key + '":', e);
+    }
+  });
+
+  // ── 2. Delete IndexedDB "AppCacheDB" ─────────────────────────────────
+  // onblocked can be followed by onsuccess once the blocker closes - run the
+  // checkout only once.
+  var _afterIdbRan = false;
+  function _afterIdb() {
+    if (_afterIdbRan) return;
+    _afterIdbRan = true;
+    console.log('[Cache Clear] Cache cleared — calling CheckoutManager_requestCheckout');
+    try {
+      CheckoutManager_requestCheckout();
+    } catch (e) {
+      console.error('[Cache Clear] CheckoutManager_requestCheckout threw:', e);
+    }
+  }
+
+  try {
+    if (typeof Main !== 'undefined' && Main.db) {
+      try { Main.db.close(); } catch (ex) {}
+      Main.db = null;
+    }
+
+    var req = indexedDB.deleteDatabase('AppCacheDB');
+    req.onsuccess = function () {
+      console.log('[Cache Clear] IndexedDB "AppCacheDB" deleted');
+      _afterIdb();
+    };
+    req.onerror = function () {
+      console.warn('[Cache Clear] IndexedDB delete error — proceeding anyway');
+      _afterIdb();
+    };
+    req.onblocked = function () {
+      console.warn('[Cache Clear] IndexedDB delete blocked — proceeding anyway after 1s');
+      setTimeout(_afterIdb, 1000);
+    };
+  } catch (dbErr) {
+    console.warn('[Cache Clear] IndexedDB deleteDatabase threw:', dbErr, '— proceeding anyway');
+    _afterIdb();
+  }
 }
 
 /*=====================================================
@@ -917,11 +1222,26 @@ function _showCanvasLineLoader() {
         requestAnimationFrame(_tick);
     });
 
+    /* Safety net: the bar only completes when the page's onReady fires.
+       If a media load hangs or a render path never reports ready, the bar
+       would sit at 85 % forever — complete it after the max wait instead. */
+    _caLineLoaderSafetyId = setTimeout(function () {
+        _caLineLoaderSafetyId = null;
+        if (_caLineLoaderDone) return;
+        console.warn('[CanvasAction] Line loader safety timeout — forcing completion');
+        _hideCanvasLineLoader();
+    }, _CA_LINE_LOADER_MAX_MS);
+
     console.log('[CanvasAction] Line loader shown');
 }
 
 function _hideCanvasLineLoader(immediate) {
     _caLineLoaderDone = true;
+
+    if (_caLineLoaderSafetyId) {
+        clearTimeout(_caLineLoaderSafetyId);
+        _caLineLoaderSafetyId = null;
+    }
 
     if (_caLineLoaderRafId) {
         cancelAnimationFrame(_caLineLoaderRafId);
@@ -957,3 +1277,297 @@ function _hideCanvasLineLoader(immediate) {
 }
 
 /* ── end line loader helpers ─────────────────────────────────── */
+
+/* =====================================================================
+ * LiveTv - single entry point for RF and IPTV playback (Samsung HTV)
+ *
+ * Follows Samsung's TEPRFIPTV reference app:
+ *   IPTV  : tvwindow.hide()  -> avplay open/prepareAsync/play
+ *   RF    : avplay stop/close -> tvwindow.setSource(TV) -> tvwindow.show()
+ *           -> tizen.tvchannel.tune()            (channels stored on TV)
+ *           -> webapis.broadcast.tuneDirect()    (no channel scan needed,
+ *                                                 needs full RF params)
+ *
+ * lg_ch_url formats from backend:
+ *   "udp://239.74.48.14:8013" / "udp://@..." / "rtp://..."  -> IPTV
+ *   "7-7"                                                   -> RF major-minor
+ *   "10"                                                    -> RF major only
+ *
+ * Optional backend field for tuneDirect (recommended, avoids channel scan):
+ *   ch.direct_tune = { broadcastStandard:"ATSC", channelType:"CDTV",
+ *                      ptc:30, programNumber:1, modulationType:"QAM256" }
+ * Optional DRM for IPTV: ch.drm_type = "PROIDIOM" | "LYNK",
+ *                        ch.drm_params = { ... } (object or JSON string)
+ * ===================================================================== */
+var LiveTv = (function () {
+  var SCREEN_W = 1920, SCREEN_H = 1080;
+  var tvWindowShown = false;
+  var mode = null;          // 'IP' | 'RF' | null
+  var seq = 0;              // ignores callbacks from a superseded request
+  var listenersAdded = false;
+
+  function log() {
+    try { console.log.apply(console, ['[LiveTv]'].concat([].slice.call(arguments))); } catch (e) {}
+  }
+  function warn() {
+    try { console.warn.apply(console, ['[LiveTv]'].concat([].slice.call(arguments))); } catch (e) {}
+  }
+  function hasTizen(ns) { return typeof tizen !== 'undefined' && !!tizen[ns]; }
+  function hasAvplay() { return typeof webapis !== 'undefined' && !!webapis.avplay; }
+
+  /* ---------- URL parsing ---------- */
+  function parse(raw) {
+    var url = String(raw == null ? '' : raw).trim();
+    var m = /^(udp|rtp):\/\/@?(\d{1,3}(?:\.\d{1,3}){3}):(\d+)$/i.exec(url);
+    if (m) return { kind: 'IP', url: m[1].toLowerCase() + '://' + m[2] + ':' + parseInt(m[3], 10) };
+    m = /^(\d+)\s*[-.]\s*(\d+)$/.exec(url);
+    if (m) return { kind: 'RF', major: parseInt(m[1], 10), minor: parseInt(m[2], 10) };
+    m = /^(\d+)$/.exec(url);
+    if (m) return { kind: 'RF', major: parseInt(m[1], 10), minor: null };
+    return { kind: 'OTHER', url: url };
+  }
+
+  function toObj(v) {
+    if (!v) return null;
+    if (typeof v === 'object') return v;
+    try { return JSON.parse(v); } catch (e) { return null; }
+  }
+
+  /* ---------- AVPlay ---------- */
+  function ensurePlayerObject() {
+    if (document.getElementById('av-player')) return;
+    try {
+      var o = document.createElement('object');
+      o.id = 'av-player';
+      o.setAttribute('type', 'application/avplayer');
+      o.style.cssText = 'position:fixed;top:0;left:0;width:' + SCREEN_W + 'px;height:' +
+                        SCREEN_H + 'px;background:transparent;z-index:0;';
+      document.body.insertBefore(o, document.body.firstChild);
+    } catch (e) { warn('av-player create failed', e && e.message); }
+  }
+
+  function stopAvplay() {
+    if (!hasAvplay()) return;
+    var st = 'NONE';
+    try { st = webapis.avplay.getState(); } catch (e) {}
+    if (st !== 'NONE') {
+      try { webapis.avplay.stop(); } catch (e) {}
+      try { webapis.avplay.close(); } catch (e) {}
+    }
+  }
+
+  /* ---------- TV window / source ---------- */
+  function hideTvWindow() {
+    if (!hasTizen('tvwindow') || !tvWindowShown) return;
+    try {
+      tizen.tvwindow.hide(function () { tvWindowShown = false; log('tvwindow hidden'); },
+                          function (e) { warn('tvwindow.hide error', e && e.message); }, 'MAIN');
+    } catch (e) { warn('tvwindow.hide threw', e && e.message); }
+    tvWindowShown = false;
+  }
+
+  function showTvWindow(done) {
+    if (!hasTizen('tvwindow')) { done && done(); return; }
+    if (tvWindowShown) { done && done(); return; }
+    var rect = ['0px', '0px', SCREEN_W + 'px', SCREEN_H + 'px'];
+    var ok = function () { tvWindowShown = true; log('tvwindow shown'); done && done(); };
+    var ko = function (e) { warn('tvwindow.show error', e && e.message); done && done(); };
+    try {
+      // BEHIND keeps the guide/overlay HTML drawn on top of the tuner video.
+      tizen.tvwindow.show(ok, ko, rect, 'MAIN', 'BEHIND');
+    } catch (e1) {
+      try { tizen.tvwindow.show(ok, ko, rect, 'MAIN'); }
+      catch (e2) { warn('tvwindow.show threw', e2 && e2.message); done && done(); }
+    }
+  }
+
+  // setSource needs a real SystemInfoVideoSourceInfo from systeminfo,
+  // not a literal {type:'TV'} (same as Samsung's Main.changeSource).
+  function ensureTvSource(done) {
+    if (!hasTizen('tvwindow')) { done(); return; }
+    try {
+      var cur = tizen.tvwindow.getSource();
+      if (cur && cur.type === 'TV') { done(); return; }
+    } catch (e) {}
+
+    var finished = false;
+    var finish = function () { if (!finished) { finished = true; done(); } };
+    setTimeout(finish, 3000); // watchdog: never block tuning on a hung callback
+
+    var setIt = function (src) {
+      try {
+        tizen.tvwindow.setSource(src,
+          function (s) { log('source set', s && s.type, s && s.number); finish(); },
+          function (e) { warn('setSource error', e && e.message); finish(); });
+      } catch (e) { warn('setSource threw', e && e.message); finish(); }
+    };
+
+    try {
+      tizen.systeminfo.getPropertyValue('VIDEOSOURCE', function (vs) {
+        var list = (vs && vs.connected) || [];
+        for (var i = 0; i < list.length; i++) {
+          if (list[i].type === 'TV') { setIt(list[i]); return; }
+        }
+        warn('TV source not in connected list, trying literal');
+        setIt({ type: 'TV', number: 1 });
+      }, function (e) {
+        warn('VIDEOSOURCE error', e && e.message);
+        setIt({ type: 'TV', number: 1 });
+      });
+    } catch (e) {
+      warn('systeminfo threw', e && e.message);
+      setIt({ type: 'TV', number: 1 });
+    }
+  }
+
+  function addListenersOnce() {
+    if (listenersAdded || !hasTizen('tvchannel')) return;
+    listenersAdded = true;
+    try { tizen.tvchannel.addSignalStateChangeListener(function (s) { log('signal state', s); }); } catch (e) {}
+    try { tizen.tvchannel.addChannelChangeListener(function (c) { log('channel changed', c && c.major, c && c.minor); }); } catch (e) {}
+  }
+
+  /* ---------- IPTV ---------- */
+  function playIp(url, ch, cb, my) {
+    if (!hasAvplay()) { cb.onError('webapis.avplay not available'); return; }
+    hideTvWindow();
+    stopAvplay();
+    ensurePlayerObject();
+    try {
+      webapis.avplay.open(url);
+      webapis.avplay.setDisplayRect(0, 0, SCREEN_W, SCREEN_H);
+      webapis.avplay.setListener({
+        onbufferingstart: function () { log('buffering start'); },
+        onbufferingprogress: function () {},
+        onbufferingcomplete: function () { log('buffering complete'); },
+        oncurrentplaytime: function () {},
+        onevent: function (t, d) { log('event', t, d); },
+        onstreamcompleted: function () { log('stream completed'); },
+        onerror: function (t) { warn('avplay error', t); if (my === seq) cb.onError(t); }
+      });
+
+      var drm = ch && ch.drm_type ? String(ch.drm_type).toUpperCase() : '';
+      if (drm === 'PROIDIOM' || drm === 'LYNK') {
+        webapis.avplay.setDrm(drm, 'Initialize', JSON.stringify(toObj(ch.drm_params) || {}));
+      }
+
+      webapis.avplay.prepareAsync(function () {
+        if (my !== seq) return;
+        try { webapis.avplay.play(); mode = 'IP'; log('IPTV playing', url); cb.onSuccess(); }
+        catch (e) { cb.onError(e && e.message); }
+      }, function (e) {
+        if (my === seq) cb.onError(e && e.message);
+      });
+    } catch (e) {
+      cb.onError(e && e.message);
+    }
+  }
+
+  /* ---------- RF ---------- */
+  function tuneCallbacks(cb, my, label) {
+    return {
+      onsuccess: function () { if (my !== seq) return; mode = 'RF'; log('RF tuned', label); cb.onSuccess(); },
+      onnosignal: function () { if (my !== seq) return; mode = 'RF'; warn('RF no signal', label); cb.onNoSignal(); },
+      onprograminforeceived: function () {}
+    };
+  }
+
+  // Finds the stored channel so "10" matches whatever minor the scan gave it.
+  function tuneStored(p, cb, my) {
+    if (!hasTizen('tvchannel')) { cb.onError('tizen.tvchannel not available (tv.channel privilege?)'); return; }
+    var label = p.major + (p.minor != null ? '-' + p.minor : '');
+
+    var direct = function (opt) {
+      try {
+        tizen.tvchannel.tune(opt, tuneCallbacks(cb, my, label),
+          function (e) { if (my === seq) cb.onError('tune: ' + (e && e.message)); });
+      } catch (e) { cb.onError('tune threw: ' + (e && e.message)); }
+    };
+
+    try {
+      tizen.tvchannel.getChannelList(function (list) {
+        if (my !== seq) return;
+        list = list || [];
+        log('stored channels:', list.length);
+        if (!list.length) {
+          cb.onError('No channels stored on TV - run a channel scan or send direct_tune params');
+          return;
+        }
+        var hit = null, i;
+        for (i = 0; i < list.length; i++) {
+          if (list[i].major === p.major && (p.minor == null || list[i].minor === p.minor)) {
+            if (p.minor != null || !hit || list[i].minor < hit.minor) hit = list[i];
+            if (p.minor != null) break;
+          }
+        }
+        if (!hit) { cb.onError('Channel ' + label + ' not in stored channel list'); return; }
+        var opt = { major: hit.major, minor: hit.minor };
+        if (hit.ptc) opt.ptc = hit.ptc;
+        if (hit.programNumber) opt.programNumber = hit.programNumber;
+        direct(opt);
+      }, function (e) {
+        warn('getChannelList error, tuning blind', e && e.message);
+        direct({ major: p.major, minor: p.minor == null ? 0 : p.minor });
+      }, 'ALL', 0, 1000);
+    } catch (e) {
+      warn('getChannelList threw, tuning blind', e && e.message);
+      direct({ major: p.major, minor: p.minor == null ? 0 : p.minor });
+    }
+  }
+
+  function tuneDirect(opt, cb, my) {
+    if (!(typeof webapis !== 'undefined' && webapis.broadcast && webapis.broadcast.tuneDirect)) {
+      cb.onError('webapis.broadcast.tuneDirect not available'); return;
+    }
+    try {
+      webapis.broadcast.tuneDirect(opt,
+        function () { if (my !== seq) return; mode = 'RF'; log('tuneDirect ok', JSON.stringify(opt)); cb.onSuccess(); },
+        function (e) { if (my === seq) cb.onError('tuneDirect: ' + (e && e.message)); });
+    } catch (e) { cb.onError('tuneDirect threw: ' + (e && e.message)); }
+  }
+
+  function playRf(p, ch, cb, my) {
+    stopAvplay();
+    addListenersOnce();
+    ensureTvSource(function () {
+      if (my !== seq) return;
+      showTvWindow(function () {
+        if (my !== seq) return;
+        var dt = toObj(ch && ch.direct_tune);
+        if (dt) tuneDirect(dt, cb, my);
+        else tuneStored(p, cb, my);
+      });
+    });
+  }
+
+  /* ---------- public ---------- */
+  function play(channel, callbacks) {
+    var ch = (channel && typeof channel === 'object') ? channel : { lg_ch_url: channel };
+    var c = callbacks || {};
+    var cb = {
+      onSuccess:  function () { try { c.onSuccess && c.onSuccess(); } catch (e) {} },
+      onNoSignal: function () { try { (c.onNoSignal || c.onError) && (c.onNoSignal || c.onError)('no signal'); } catch (e) {} },
+      onError:    function (m) { warn('play failed:', m); try { c.onError && c.onError(m); } catch (e) {} }
+    };
+    var p = parse(ch.lg_ch_url);
+    var my = ++seq;
+    log('play', ch.lg_ch_url, '->', p.kind);
+
+    if (p.kind === 'IP') return playIp(p.url, ch, cb, my);
+    if (p.kind === 'RF') return playRf(p, ch, cb, my);
+
+    // Anything else (http/hls/etc.) keeps the existing media path
+    hideTvWindow();
+    try { Navigation.playSelectedChannel(p.url); cb.onSuccess(); }
+    catch (e) { cb.onError(e && e.message); }
+  }
+
+  function stop() {
+    seq++;
+    stopAvplay();
+    hideTvWindow();
+    mode = null;
+  }
+
+  return { play: play, stop: stop, parse: parse, getMode: function () { return mode; } };
+})();

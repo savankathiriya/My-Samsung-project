@@ -82,6 +82,71 @@ Navigation.updateDownloadProgress = function (targetPercent) {
   }, 50);
 };
 
+/**
+ * Updates the language-selection page texts (.top_texts_welcom,
+ * .language-guest-message, .select_lan, .terms_cond) based on the
+ * language button at index `btnIndex`.
+ *
+ * caption_text and guest_message come from the page_caption template
+ * and are resolved through resolvePlaceholders so that any
+ * {{propertyName}} / {{guestName}} tokens are filled in correctly.
+ *
+ * Exposed publicly so it can be called immediately after the page is
+ * rendered to initialise texts for the first focused button.
+ */
+Navigation.updateLanguagePageTexts = function (btnIndex) {
+  var btn = macro("#lang_btn-" + btnIndex);
+  if (!btn.length) return;
+
+  var langName = btn.find(".lang-text").text().toUpperCase();
+
+  var pageCaption = (Main.templateApiData && Main.templateApiData.page_caption) || {};
+  var captionText  = resolvePlaceholders(pageCaption.caption_text  || "");
+  var guestMessage = resolvePlaceholders(pageCaption.guest_message || "");
+
+  // Language-specific overrides for select / terms strings
+  var selectText, termsText;
+
+  if (langName === "FRENCH") {
+    if (!captionText) captionText = "Bienvenue";
+    selectText = "Veuillez sélectionner votre langue";
+    termsText  = "Vous acceptez nos termes et conditions ainsi que notre politique de confidentialité.";
+  } else if (langName === "SPANISH") {
+    if (!captionText) captionText = "Bienvenidos";
+    selectText = "Seleccione su idioma";
+    termsText  = "Acepta nuestros términos y condiciones y nuestra política de privacidad.";
+  } else if (langName === "CHINESE") {
+    if (!captionText) captionText = "欢迎尊敬的客人";
+    selectText = "请选择您的语言";
+    termsText  = "点击即表示您同意我们的条款和条件以及隐私政策。";
+  } else if (langName === "JAPANESE") {
+    if (!captionText) captionText = "ようこそ、親愛なるゲスト様";
+    selectText = "言語を選択してください";
+    termsText  = "クリックすることで、利用規約およびプライバシーポリシーに同意したものとみなされます。";
+  } else if (langName === "THAI") {
+    if (!captionText) captionText = "ยินดีต้อนรับ เรียนแขก";
+    selectText = "โปรดเลือกภาษาของคุณ";
+    termsText  = "เมื่อคลิก คุณยอมรับข้อกำหนดและเงื่อนไข และนโยบายความเป็นส่วนตัวของเรา";
+  } else {
+    // Default / English
+    if (!captionText) captionText = "Welcome Dear Guest";
+    selectText = "Please Select Your Language";
+    termsText  = "By clicking, you agree to our Terms & Conditions and Privacy Policy.";
+  }
+
+  macro(".top_texts_welcom").text(captionText || "");
+  // Only update guest message element if it exists
+  if (guestMessage) {
+    macro(".language-guest-message").text(guestMessage).show();
+  } else {
+    macro(".language-guest-message").text("").hide();
+  }
+  macro(".select_lan").text(selectText);
+  macro(".terms_cond").text(termsText);
+
+  console.log("[updateLanguagePageTexts] lang:", langName, "| caption:", captionText, "| message:", guestMessage);
+};
+
 // Activation screen — only active key is OK on the Retry button, which is shown
 // once the automatic provision-auth retries are exhausted.
 Navigation.activationPageNavigation = function (event) {
@@ -101,56 +166,9 @@ Navigation.languagePageNavigation = function (event) {
   var keycode = window.event ? event.keyCode : event.which;
   var id = macro(".imageFocus").attr("id");
 
-  /**
-   * Updates the language-selection page texts (.top_texts_welcom,
-   * .language-guest-message, .select_lan, .terms_cond) based on the
-   * language button at index `btnIndex`.
-   *
-   * caption_text and guest_message come from the page_caption template
-   * and are resolved through resolvePlaceholders so that any
-   * {{propertyName}} / {{guestName}} tokens are filled in correctly.
-   *
-   * Fallback strings are used when page_caption is not configured.
-   */
+  // Delegate to the public helper so the same logic is shared
   function updatePageTexts(btnIndex) {
-    var btn = macro("#lang_btn-" + btnIndex);
-    if (!btn.length) return;
-
-    var langName = btn.find(".lang-text").text().toUpperCase();
-
-    var pageCaption = (Main.templateApiData && Main.templateApiData.page_caption) || {};
-    var captionText  = resolvePlaceholders(pageCaption.caption_text  || "");
-    var guestMessage = resolvePlaceholders(pageCaption.guest_message || "");
-
-    // Language-specific overrides for select / terms strings
-    var selectText, termsText;
-
-    if (langName === "FRENCH") {
-      if (!captionText) captionText = "Bienvenue";
-      selectText = "Veuillez sélectionner votre langue";
-      termsText  = "Vous acceptez nos termes et conditions ainsi que notre politique de confidentialité.";
-    } else if (langName === "SPANISH") {
-      if (!captionText) captionText = "Bienvenidos";
-      selectText = "Seleccione su idioma";
-      termsText  = "Acepta nuestros términos y condiciones y nuestra política de privacidad.";
-    } else {
-      // Default / English
-      if (!captionText) captionText = "Welcome Dear Guest";
-      selectText = "Please Select Your Language";
-      termsText  = "By clicking, you agree to our Terms & Conditions and Privacy Policy.";
-    }
-
-    macro(".top_texts_welcom").text(captionText || "");
-    // Only update guest message element if it exists
-    if (guestMessage) {
-        macro(".language-guest-message").text(guestMessage).show();
-    } else {
-        macro(".language-guest-message").text("").hide();
-    }
-    macro(".select_lan").text(selectText);
-    macro(".terms_cond").text(termsText);
-
-    console.log("[languagePageNavigation] lang:", langName, "| caption:", captionText, "| message:", guestMessage);
+    Navigation.updateLanguagePageTexts(btnIndex);
   }
 
   switch (keycode) {
@@ -367,6 +385,8 @@ Navigation.homePageLoad = function (menuData) {
       (item.lg_app_id || "") +
       '" app_url="' +
       (item.app_url || "") +
+      '" app_url_type="' +
+      (item.app_url_type || "") +
       '" source="' +
       (item.name || "") +
       '" class="menu-item">' +
@@ -411,6 +431,7 @@ Navigation.homePageNavigation = function (event) {
   var source = focusedItem.attr("source");
   var appUrl = focusedItem.attr("appUrl");
   var app_url = focusedItem.attr("app_url");
+  var app_url_type = (focusedItem.attr("app_url_type") || "").toLowerCase();
 
   console.log("keycode, id, source, appUrl", keycode, id, source, appUrl);
 
@@ -568,9 +589,13 @@ Navigation.homePageNavigation = function (event) {
           },
           function(err) {
             console.log("Netflix launch failed: " + (err && err.message));
+            // SAMSUNG: LG passed its own app id ("netflix"); use the Tizen id.
+            ensureAppInstalled(Main.lgSettings.netflix_app_id);
           }
         )
       })
+
+      break;
     }
 
     case tvKeyCode.Youtube: {
@@ -585,9 +610,13 @@ Navigation.homePageNavigation = function (event) {
           },
           function (f) {
             console.log("YouTube not loaded:", f && f.message);
+            // SAMSUNG: LG passed its own app id ("youtube.leanback.v4"); use the Tizen id.
+            ensureAppInstalled(Main.lgSettings.youtube_app_id);
           }
         )
       })
+
+      break;
     }
 
     case tvKeyCode.Casting: {
@@ -595,6 +624,8 @@ Navigation.homePageNavigation = function (event) {
         try { if (typeof ScreenSaver !== 'undefined') ScreenSaver.clearIdleTimer(); } catch(e) {}
         Main.handleGoogleCast();
       })
+
+      break;
     }
 
     case tvKeyCode.Enter: {
@@ -611,6 +642,19 @@ Navigation.homePageNavigation = function (event) {
         Main.deviceActivity("open","page","welcome screen");
         Main.getTemplateApiData(comingFromHomeLang);
 
+      }
+      // app_url_type takes priority over appUrl for dynamic pages and playlists
+      else if (app_url_type === "dynamicpage") {
+        checkNetworkAndLaunch("Our Hotel", function () {
+          Main.deviceActivity("open","page",source);
+          Main.jsontemplateApi(app_url);
+        })
+      }
+      else if (app_url_type === "playlist") {
+        checkNetworkAndLaunch("Playlist", function () {
+          Main.deviceActivity("open","page",source);
+          Main.playlistApi(app_url);
+        })
       }
       else if (appUrl === "hdmi") {
         Main.addBackData("MyDevice");
@@ -636,6 +680,8 @@ Navigation.homePageNavigation = function (event) {
             },
             function(err) {
               console.log("Netflix launch failed: " + (err && err.message));
+              // SAMSUNG: LG passed its own app id ("netflix"); use the Tizen id.
+              ensureAppInstalled(Main.lgSettings.netflix_app_id);
             }
           )
         })
@@ -652,8 +698,9 @@ Navigation.homePageNavigation = function (event) {
             },
             function (f) {
               console.log("YouTube not loaded:", f && f.message);
+              ensureAppInstalled("com.samsung.tv.cobalt-yt");
             })
-        }) 
+        })
       }
       else if(appUrl === "accuweather") {
         try { if (typeof ScreenSaver !== 'undefined') ScreenSaver.clearIdleTimer(); } catch(e) {}
@@ -733,6 +780,11 @@ Navigation.homePageNavigation = function (event) {
           Main.playlistApi(app_url);
         })
       }
+      else {
+        if(appUrl) {
+          ensureAppInstalled(appUrl);
+        }
+      }
 
       break;
     }
@@ -757,6 +809,82 @@ Navigation.homePageNavigation = function (event) {
 // Add this to your Navigation object in navigation.js
 
 /**
+ * ────────────────────────────────────────────────────────────────────────
+ * STARTUP SCREEN ONLY: long-press ArrowUp (~7s, within the 5-10s window
+ * requested) clears all cache then checks out — a hidden maintenance
+ * gesture for the startup-screen canvas feature specifically.
+ *
+ * Scoped strictly via _isOnStartupScreen(): Main._isStartupScreenMode is
+ * ONLY ever set true by the startup_screen boot paths (Main.js —
+ * restoreFromCacheAndOpenApp's offline render and loadCachedImagesThenRender's
+ * proceed()). A normal "ourHotel" dynamic page opened via jsontemplateApi()
+ * (e.g. from a Home tile) never sets that flag, so this gesture does nothing
+ * there — only on the actual startup-screen root/children.
+ *
+ * NOT timer/keyup based. A single setTimeout + "cancel on keyup" design was
+ * tried first, but some remotes / TV key injection fire a keyup for
+ * ArrowUp between every repeat "tick" even while the button is still
+ * physically held (discrete down/up pairs instead of one continuous
+ * keydown...keydown(repeat)...keyup) — that silently wiped the timer every
+ * tick, so it could never reach the threshold.
+ *
+ * Instead this measures elapsed time across repeated keydown ticks: each
+ * ArrowUp keydown calls _tickStartupLongPress(). A hold is considered
+ * broken only when the GAP since the previous tick exceeds
+ * STARTUP_LONGPRESS_GAP_MS (no keydown arrived for that long) — never on
+ * keyup. As long as keydown ticks (the remote's own repeat events) keep
+ * arriving faster than that gap, elapsed time keeps accumulating even if
+ * stray keyup events fire in between.
+ * ────────────────────────────────────────────────────────────────────────
+ */
+var STARTUP_LONGPRESS_MS     = 7000; // total hold duration required
+var STARTUP_LONGPRESS_GAP_MS = 600;  // max allowed gap between keydown ticks before treating it as a new press
+var _startupLongPressStartTs    = null;
+var _startupLongPressLastTickTs = null;
+
+function _isOnStartupScreen() {
+    return !!(typeof view !== 'undefined' && view === 'ourHotel' && Main._isStartupScreenMode);
+}
+
+Navigation._tickStartupLongPress = function () {
+    if (!_isOnStartupScreen()) return;
+
+    var now = Date.now();
+
+    // Gap since the last tick too large (or this is the first tick) — fresh hold.
+    if (!_startupLongPressLastTickTs || (now - _startupLongPressLastTickTs) > STARTUP_LONGPRESS_GAP_MS) {
+        if (_startupLongPressStartTs) {
+            console.log('[StartupScreen] ArrowUp tick gap > ' + STARTUP_LONGPRESS_GAP_MS + 'ms — resetting long-press timer');
+        } else {
+            console.log('[StartupScreen] ArrowUp held — starting long-press timer (' + STARTUP_LONGPRESS_MS + 'ms)');
+        }
+        _startupLongPressStartTs = now;
+    }
+
+    _startupLongPressLastTickTs = now;
+
+    var elapsed = now - _startupLongPressStartTs;
+    if (elapsed >= STARTUP_LONGPRESS_MS) {
+        _startupLongPressStartTs    = null;
+        _startupLongPressLastTickTs = null;
+        console.log('[StartupScreen] ArrowUp long-press threshold reached — clearing cache then checkout');
+        try { _clearAllCacheThenCheckout(); } catch (e) { console.warn('[StartupScreen] _clearAllCacheThenCheckout error:', e); }
+    }
+};
+
+// Kept for the keyup listener in index.js — diagnostic only. A real
+// release doesn't need to force a reset: the next genuine press will
+// already see a large gap (above STARTUP_LONGPRESS_GAP_MS) and start
+// fresh on its own. Not resetting state here means a false/stray keyup
+// mid-hold (the behavior this whole redesign works around) can never
+// break an otherwise-continuous hold.
+Navigation._cancelStartupLongPress = function () {
+    if (_startupLongPressStartTs !== null) {
+        console.log('[StartupScreen] ArrowUp keyup seen at ' + (Date.now() - _startupLongPressStartTs) + 'ms into hold (state kept — gap check will confirm real release)');
+    }
+};
+
+/**
  * Navigation handler for OurHotel page with action buttons
  */
 Navigation.ourHotelPageNavigation = function (event) {
@@ -764,12 +892,19 @@ Navigation.ourHotelPageNavigation = function (event) {
 
     console.log('[Navigation] OurHotel key pressed:', key);
 
+    /* NOTE: a navTimer is driven ONLY by its own clock. No remote key may
+       advance it, fire its action or restart it — EXIT/BACK is the single key
+       that affects it, and it only CANCELS it (see the EXIT case below). */
+
     switch (key) {
         case tvKeyCode.ArrowUp:
             console.log('[Navigation] Arrow Up');
             if (typeof CanvasAction !== 'undefined' && CanvasAction.moveFocus) {
                 CanvasAction.moveFocus('up');
             }
+            // Startup-screen-only long-press gesture (see function above) —
+            // no-op on any other ourHotel page.
+            Navigation._tickStartupLongPress();
             break;
 
         case tvKeyCode.ArrowDown:
@@ -794,6 +929,8 @@ Navigation.ourHotelPageNavigation = function (event) {
             break;
 
         case tvKeyCode.Enter:
+            /* OK executes the focused action card ONLY. It must never trigger
+               a navTimer — that timer belongs to its own countdown. */
             console.log('[Navigation] Enter pressed');
             if (typeof CanvasAction !== 'undefined' && CanvasAction.executeAction) {
                 CanvasAction.executeAction();
@@ -806,6 +943,45 @@ Navigation.ourHotelPageNavigation = function (event) {
         case 461:
         case 10009:
             console.log('[Navigation] Exiting OurHotel page');
+
+            // ── Startup screen root: nothing to go "back" to ───────────────────
+            // In startup-screen mode, once pageHistory AND backData are both
+            // empty, there is no home page and no alert to return to — this IS
+            // the root. Cancelling a pending navTimer here would just strand the
+            // guest on a frozen screen with no further input possible. Instead,
+            // force that navTimer to fire NOW — ttl lead-in or an autoplay
+            // dwell-wait alike — landing the guest on the page it was already
+            // counting down to, rather than leaving the cancelled countdown with
+            // nothing having happened.
+            // Only a genuine root WITHOUT any pending navTimer stays blocked
+            // (static page, nothing to fire, nowhere to go — EXIT truly no-ops).
+            if (Main._isStartupScreenMode &&
+                !(Array.isArray(Main.pageHistory) && Main.pageHistory.length > 0) &&
+                (!backData || backData.length === 0)) {
+
+                var _fired = false;
+                try {
+                    if (typeof CanvasNavTimer !== 'undefined' && CanvasNavTimer.fireNow) {
+                        _fired = CanvasNavTimer.fireNow('EXIT pressed on startup root');
+                    }
+                } catch (e) {}
+
+                if (_fired) {
+                    console.log('[Navigation] EXIT on startup root — pending navTimer fired immediately');
+                } else {
+                    console.log('[Navigation] EXIT blocked — startup screen root, no pending navTimer, no cleanup');
+                }
+                return;
+            }
+            // ─────────────────────────────────────────────────────────────────
+
+            /* The guest took control — stop any navTimer autoplay chain so it
+               cannot navigate on top of the page they went back to. */
+            try {
+                if (typeof CanvasNavTimer !== 'undefined' && CanvasNavTimer.cancelAutoplay) {
+                    CanvasNavTimer.cancelAutoplay('EXIT/BACK pressed');
+                }
+            } catch (e) {}
 
             // ── Only show the line loader when navigating canvas→canvas.
             //    If pageHistory is empty we are on the last canvas page and
@@ -1111,10 +1287,20 @@ Navigation.deviceSwitchNavigation = function (event) {
           console.error("Reboot failed", e);
         }
       }
+      else if(action === "troubleshoot") {
+        console.log('[Troubleshoot] Clearing all cache and triggering checkout...');
+        // SAMSUNG: _clearAllCacheThenCheckout lives in appconfig.js; fall back
+        // to a plain checkout if it is not loaded (same guard as index.js).
+        if (typeof _clearAllCacheThenCheckout === 'function') {
+          _clearAllCacheThenCheckout();
+        } else {
+          CheckoutManager_requestCheckout();
+        }
+      }
       else {
         // ensureAppInstalled("org.tizen.NetworkSpeaker");
 
-        var speakerAppId = "com.samsung.tv.googlecast-app";
+        var speakerAppId = "com.samsung.tv.tvPlusDeeplinker";
         console.log("[Bluetooth] action:", action, "- launching", speakerAppId);
         try {
           tizen.application.launch(
@@ -1300,14 +1486,26 @@ Navigation.popupKeyhandler = function (event) {
           macro("#popUpFDFS").html('');
           Main.popupData = {};
           DisplayCheckOutScreen = true;
-          CheckoutManager_requestCheckout();
+          // SAMSUNG: checkoutDestroyThenPowerOff lives in appconfig.js (no-reboot
+          // checkout + power off); fall back to the full checkout if not loaded.
+          if (typeof checkoutDestroyThenPowerOff === 'function') {
+            checkoutDestroyThenPowerOff();
+          } else {
+            CheckoutManager_requestCheckout();
+          }
         }
         else if (splitData[1] == 2) {
           // Clear only (legacy fallback always)
           macro("#popUpFDFS").html('');
           Main.popupData = {};
           DisplayCheckOutScreen = true;
-          CheckoutManager_requestCheckout();
+          // SAMSUNG: checkoutDestroyThenPowerOff lives in appconfig.js (no-reboot
+          // checkout + power off); fall back to the full checkout if not loaded.
+          if (typeof checkoutDestroyThenPowerOff === 'function') {
+            checkoutDestroyThenPowerOff();
+          } else {
+            CheckoutManager_requestCheckout();
+          }
         }
       }else {
         macro("#popUpFDFS").html('');
@@ -2356,90 +2554,12 @@ Navigation.demoPlayers = function (event) {
               selectedChannel.name || selectedChannel.title || "");
           } catch(e) { console.warn('[deviceActivity] Live TV guide channel tracking error:', e); }
           
-          // Play the selected channel (UDP)
           if (selectedChannel.lg_ch_url) {
-            var chUrl = selectedChannel.lg_ch_url;
-
-            if(/^udp:\/\/@?\d{1,3}(\.\d{1,3}){3}:\d+$/.test(chUrl)) {
-              var urlWithoutPrefix = chUrl.replace(/^udp:\/\/@?/, ""); // "239.74.48.14:8013"
-              var parts = urlWithoutPrefix.split(":");
-              var ip = parts[0];
-              var port = parseInt(parts[1]);
-
-              // SAMSUNG: UDP multicast is not a tuner channel - it plays
-              // through webapis.avplay (AVPlayExtension udp:// support).
-              try {
-                try { webapis.avplay.stop(); } catch (e) {}
-                try { webapis.avplay.close(); } catch (e) {}
-                webapis.avplay.open("udp://" + ip + ":" + port);
-                webapis.avplay.setDisplayRect(0, 0,
-                  (window.screen && window.screen.width)  || 1920,
-                  (window.screen && window.screen.height) || 1080);
-                webapis.avplay.prepareAsync(function () {
-                  webapis.avplay.play();
-                  console.log('[Live TV] Successfully switched to channel');
-                }, function (error) {
-                  console.error("Failed to open UDP channel via avplay:", error && error.message);
-                });
-              } catch (eUdp) {
-                console.error("Failed to change channel via avplay:", eUdp && eUdp.message);
-              }
-            }
-
-            else if(/^\d+-\d+$/.test(chUrl)) {
-              var channelParts = chUrl.split("-");
-              var majorNumber = parseInt(channelParts[0]);
-              var minorNumber = parseInt(channelParts[1]);
-
-              console.log('[Live TV] Detected RF channel class 3 format:', chUrl);
-              console.log('[Live TV] Major Number:', majorNumber, 'Minor Number:', minorNumber);
-
-              // SAMSUNG: tizen.tvchannel.tune({ major, minor }, callbacks, errCb)
-              try {
-                tizen.tvchannel.tune({ major: majorNumber, minor: minorNumber }, {
-                  onsuccess: function () {
-                    console.log('[Live TV] Successfully switched to RF channel:', majorNumber + '-' + minorNumber);
-                  },
-                  onnosignal: function () {
-                    console.error("[Live TV] No signal on RF channel:", majorNumber + '-' + minorNumber);
-                  },
-                  onprograminforeceived: function () {}
-                }, function (error) {
-                  console.error("[Live TV] Failed to change RF channel via tvchannel:", error && error.message);
-                });
-              } catch (eRf) {
-                console.error("[Live TV] tvchannel.tune threw:", eRf && eRf.message);
-              }
-            }
-
-            else if(/^\d+$/.test(chUrl)) {
-              var logicalNumber = parseInt(chUrl);
-
-              console.log('[Live TV] Detected RF channel class 1 format (logical number):', chUrl);
-              console.log('[Live TV] Logical Channel Number:', logicalNumber);
-
-              // SAMSUNG: single-part channel numbers are addressed as
-              // major with minor 0 - tvchannel has no logicalNumber form.
-              try {
-                tizen.tvchannel.tune({ major: logicalNumber, minor: 0 }, {
-                  onsuccess: function () {
-                    console.log('[Live TV] Successfully switched to logical channel:', logicalNumber);
-                  },
-                  onnosignal: function () {
-                    console.error("[Live TV] No signal on logical channel:", logicalNumber);
-                  },
-                  onprograminforeceived: function () {}
-                }, function (error) {
-                  console.error("[Live TV] Failed to change logical channel via tvchannel:", error && error.message);
-                });
-              } catch (eLog) {
-                console.error("[Live TV] tvchannel.tune threw:", eLog && eLog.message);
-              }
-            }
-
-            else {
-              Navigation.playSelectedChannel(chUrl)
-            }
+            LiveTv.play(selectedChannel, {
+              onSuccess:  function () { console.log('[Live TV Guide] Playing', selectedChannel.lg_ch_url); },
+              onNoSignal: function () { console.warn('[Live TV Guide] No signal', selectedChannel.lg_ch_url); },
+              onError:    function (m) { console.error('[Live TV Guide] Play failed', selectedChannel.lg_ch_url, m); }
+            });
           }
         } else {
           console.warn('[Live TV Guide] Channel not found for uuid:', channelUuid);
@@ -2538,63 +2658,12 @@ Navigation.demoPlayers = function (event) {
               liveNextChannel.name || liveNextChannel.title || "");
           } catch(e) { console.warn('[deviceActivity] Live TV ChannelUp/Down tracking error:', e); }
 
-          // Play the new channel using the same URL-type dispatch as the Enter handler
           if (liveNextChannel.lg_ch_url) {
-            var liveChUrl = liveNextChannel.lg_ch_url;
-
-            if (/^udp:\/\/@?\d{1,3}(\.\d{1,3}){3}:\d+$/.test(liveChUrl)) {
-              var liveUrlWithoutPrefix = liveChUrl.replace(/^udp:\/\/@?/, '');
-              var liveParts = liveUrlWithoutPrefix.split(':');
-              // SAMSUNG: UDP multicast plays through webapis.avplay.
-              try {
-                try { webapis.avplay.stop(); } catch (e) {}
-                try { webapis.avplay.close(); } catch (e) {}
-                webapis.avplay.open("udp://" + liveParts[0] + ":" + parseInt(liveParts[1]));
-                webapis.avplay.setDisplayRect(0, 0,
-                  (window.screen && window.screen.width)  || 1920,
-                  (window.screen && window.screen.height) || 1080);
-                webapis.avplay.prepareAsync(function () {
-                  webapis.avplay.play();
-                  console.log('[demoPlayers ChannelUp/Down] UDP switch success');
-                }, function (e) {
-                  console.error('[demoPlayers ChannelUp/Down] UDP switch failed:', e && e.message);
-                });
-              } catch (eUdp2) {
-                console.error('[demoPlayers ChannelUp/Down] UDP switch threw:', eUdp2 && eUdp2.message);
-              }
-            } else if (/^\d+-\d+$/.test(liveChUrl)) {
-              var liveMajMin = liveChUrl.split('-');
-              // SAMSUNG: tizen.tvchannel.tune({ major, minor }, ...)
-              try {
-                tizen.tvchannel.tune({
-                  major: parseInt(liveMajMin[0]),
-                  minor: parseInt(liveMajMin[1])
-                }, {
-                  onsuccess: function () { console.log('[demoPlayers ChannelUp/Down] RF major-minor switch success'); },
-                  onnosignal: function () { console.error('[demoPlayers ChannelUp/Down] RF major-minor no signal'); },
-                  onprograminforeceived: function () {}
-                }, function (e) {
-                  console.error('[demoPlayers ChannelUp/Down] RF major-minor switch failed:', e && e.message);
-                });
-              } catch (eRf2) {
-                console.error('[demoPlayers ChannelUp/Down] tvchannel.tune threw:', eRf2 && eRf2.message);
-              }
-            } else if (/^\d+$/.test(liveChUrl)) {
-              // SAMSUNG: single-part number = major with minor 0.
-              try {
-                tizen.tvchannel.tune({ major: parseInt(liveChUrl), minor: 0 }, {
-                  onsuccess: function () { console.log('[demoPlayers ChannelUp/Down] RF logical switch success'); },
-                  onnosignal: function () { console.error('[demoPlayers ChannelUp/Down] RF logical no signal'); },
-                  onprograminforeceived: function () {}
-                }, function (e) {
-                  console.error('[demoPlayers ChannelUp/Down] RF logical switch failed:', e && e.message);
-                });
-              } catch (eLog2) {
-                console.error('[demoPlayers ChannelUp/Down] tvchannel.tune threw:', eLog2 && eLog2.message);
-              }
-            } else {
-              Navigation.playSelectedChannel(liveChUrl);
-            }
+            LiveTv.play(liveNextChannel, {
+              onSuccess:  function () { console.log('[demoPlayers ChannelUp/Down] Playing', liveNextChannel.lg_ch_url); },
+              onNoSignal: function () { console.warn('[demoPlayers ChannelUp/Down] No signal', liveNextChannel.lg_ch_url); },
+              onError:    function (m) { console.error('[demoPlayers ChannelUp/Down] Play failed', liveNextChannel.lg_ch_url, m); }
+            });
           } else {
             console.warn('[demoPlayers] Next channel has no lg_ch_url, skipping playback');
           }

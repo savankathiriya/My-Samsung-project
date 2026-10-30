@@ -304,7 +304,7 @@ Main.launchGoogleCastGuide = function () {
     password       : password,
     channel_number : 0,          // 0 = random channel 1-165
     signal_strength: 0,
-    is_ssid_hidden : false,
+    is_ssid_hidden : true,       // true = hidden SSID
     start_page     : "0",        // 0: QR code page (default)
     color_schemes  : "default",  // "default" | "toned_down"
     hide_2nd_screen: false

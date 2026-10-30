@@ -247,6 +247,10 @@ var CanvasAnimation = (function () {
         if (id)   push(document.querySelector('[data-canvas-clock-id="' + id   + '"]'));
         if (name && name !== id) push(document.querySelector('[data-canvas-clock-id="' + name + '"]'));
 
+        // CanvasNavTimer: data-canvas-navtimer-id (countdown overlay)
+        if (id)   push(document.querySelector('[data-canvas-navtimer-id="' + id   + '"]'));
+        if (name && name !== id) push(document.querySelector('[data-canvas-navtimer-id="' + name + '"]'));
+
         // CanvasWeather: data-canvas-weather-id
         if (id)   push(document.querySelector('[data-canvas-weather-id="' + id   + '"]'));
         if (name && name !== id) push(document.querySelector('[data-canvas-weather-id="' + name + '"]'));

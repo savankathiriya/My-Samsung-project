@@ -252,7 +252,7 @@ Util.homePageHtml = function () {
   Text += '<div class="home-container">';
 
   // Background Image
-  Text += '<img src="' + bgImage + '" alt="Background" class="home-bg-image">';
+  Text += '<img id="home-bg-img" src="' + bgImage + '" alt="Background" class="home-bg-image">';
 
   Text += '<div class="content-container">';
   // Header Section
@@ -423,10 +423,18 @@ Util.DevicesSwitchPage = function () {
     Text += '      </div>';
     rendered++;
 
+    var troubleshootImg = (Main.localAssets && Main.localAssets['troubleshoot']) || 'images/troubleshoot.png';
+    var troubleshootIndex = rendered;
+    Text += '<div class="device-card menu-btn card-type-troubleshoot" id="device-btn-' + troubleshootIndex + '" data-action="troubleshoot">';
+    Text += '  <div class="device-icon"><img src="' + troubleshootImg + '" alt="Troubleshoot" /></div>';
+    Text += '  <div class="device-label">Troubleshoot</div>';
+    Text += '</div>';
+    rendered++;
+
     Text += '    </div>'; // device-row
     Text += '  </div>';   // device-panel
 
-    Text += '<div class="device-info">' + deviceMac + ' / ' + deviceSerialNumber + ' / ' + shortIp + '</div>';
+    Text += '<div class="device-info">' + deviceMac + ' / ' + deviceSerialNumber + ' / ' + shortIp + ' / ' + appConfig.appVersion + '</div>';
     Text += '</div>'; // devicesContainer
 
     try { macro("#mainContent").html(Text); macro("#mainContent").show(); } catch (e) { console.warn('render devices failed', e); }
@@ -1588,6 +1596,9 @@ Util.ourHotelPage = function (onReady) {
     html += '<div id="our-hotel-container" style="position:fixed; top:0; left:0; width:100%; height:100%; background:#000; z-index:1000; margin:0; padding:0; overflow:hidden;">';
     html += '  <canvas id="templateCanvas" style="display:block; position:absolute; top:0; left:0; margin:0; padding:0;"></canvas>';
     html += '</div>';
+    // Popup container — required by Cleardata action (and any other popup) so that
+    // macro("#popUpFDFS").html(...) has a DOM target when the canvas page is active.
+    html += '<div id="popUpFDFS" style="position:fixed; top:0; left:0; width:100%; height:100%; z-index:9000; pointer-events:auto;"></div>';
 
     // Render canvas after DOM is fully ready
     setTimeout(function() {
@@ -1629,7 +1640,12 @@ Util.ourHotelPage = function (onReady) {
             if (typeof CanvasVideo !== 'undefined' && CanvasVideo.cleanup) {
                 CanvasVideo.cleanup();
             }
-            
+            // navTimer: hard reset — this is a fresh page entry, so any
+            // pending auto-navigation countdown starts again from startDelay.
+            if (typeof CanvasNavTimer !== 'undefined' && CanvasNavTimer.reset) {
+                CanvasNavTimer.reset();
+            }
+
             // Pass onReady so loader hides only after canvas is painted
             if (typeof renderTemplateCanvas !== 'undefined') {
                 renderTemplateCanvas(onReady);

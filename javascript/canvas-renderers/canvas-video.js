@@ -53,6 +53,35 @@ var CanvasVideo = (function () {
     var activeVideos = [];
     var primarySet   = false;   /* true once the first (primary) video is registered */
 
+    /* Max consecutive 'error' recoveries per video before we give up.
+       A dead / unsupported URL (MEDIA_ERR_SRC_NOT_SUPPORTED, code 4) used to
+       retry forever, flooding the console for as long as the app was running. */
+    var MAX_ERROR_RETRIES = 3;
+
+    /**
+     * _isDead(video)
+     *
+     * True once a video must no longer be touched by ANY deferred callback
+     * (error retry, stall recovery, suspend recovery, watchdog tick, play
+     * promise rejection).
+     *
+     * Three reasons a video is dead:
+     *   1. cleanup() disposed it  -> _cvDisposed flag.
+     *   2. It has no parent at all.
+     *   3. Its wrapper div was detached from the container — the old
+     *      `!video.parentNode` check MISSED this: cleanup() removes the wrap,
+     *      not the <video>, so video.parentNode stayed non-null (the detached
+     *      wrap) and the retry chain kept running after the page was gone:
+     *        src='' -> error(code 4) -> retry -> load() -> error -> ...
+     */
+    function _isDead(video) {
+        if (!video || video._cvDisposed === true) return true;
+        var wrap = video.parentNode;
+        if (!wrap) return true;
+        if (!wrap.parentNode) return true;
+        return false;
+    }
+
     /* ================================================================
        PUBLIC: render(ctx, el, canvas)
        Called by CanvasRenderer for every video element, in zIndex order.
@@ -217,8 +246,10 @@ var CanvasVideo = (function () {
          * ──────────────────────────────────────────────────────────── */
         var loopCount = 0;
         var inHard    = false;   /* re-entry guard for _hardRestart */
+        var errorRetries = 0;    /* consecutive 'error' recoveries, capped */
 
         function _softRestart() {
+            if (_isDead(video)) return;
             inHard = false;
             loopCount++;
             console.log('[CanvasVideo] loop soft restart #' + loopCount + ':', elementId);
@@ -227,13 +258,14 @@ var CanvasVideo = (function () {
         }
 
         function _hardRestart() {
-            if (inHard) return;
+            if (inHard || _isDead(video)) return;
             inHard = true;
             console.log('[CanvasVideo] loop hard restart:', elementId);
             try { video.pause(); } catch(e){}
             video.load();
             setTimeout(function () {
                 inHard = false;
+                if (_isDead(video)) return;
                 _tryPlay(video, elementId, null);
             }, 400);
         }
@@ -260,7 +292,7 @@ var CanvasVideo = (function () {
             stallCount = 0;
             lastTime   = -1;
             stallTimer = setInterval(function () {
-                if (!video.parentNode)                        { _stopWatchdog(); return; }
+                if (_isDead(video))                           { _stopWatchdog(); return; }
                 if (video.paused || video.ended)              { stallCount = 0; lastTime = -1; return; }
                 if (video.readyState < 2 /* HAVE_CURRENT */)  { return; }
 
@@ -274,7 +306,10 @@ var CanvasVideo = (function () {
                             _hardRestart();
                         } else {
                             video.load();
-                            setTimeout(function () { _tryPlay(video, elementId, null); }, 400);
+                            setTimeout(function () {
+                                if (_isDead(video)) return;
+                                _tryPlay(video, elementId, null);
+                            }, 400);
                         }
                     }
                 } else {
@@ -296,6 +331,7 @@ var CanvasVideo = (function () {
 
         video.addEventListener('playing', function () {
             _applyFit();
+            errorRetries = 0;       /* the source works — allow future recoveries */
             _startWatchdog();       /* restart watchdog on every play event */
             if (!started) {
                 started = true;
@@ -331,13 +367,17 @@ var CanvasVideo = (function () {
          * NOT gated by 'started' so mid-loop stalls are recovered too.
          */
         video.addEventListener('stalled', function () {
+            if (_isDead(video)) return;
             console.warn('[CanvasVideo] stalled:', elementId);
             setTimeout(function () {
-                if (!video.parentNode) return;
+                if (_isDead(video)) return;
                 if (video.paused || video.readyState < 3) {
                     console.warn('[CanvasVideo] stall recovery:', elementId);
                     video.load();
-                    setTimeout(function () { _tryPlay(video, elementId, null); }, 400);
+                    setTimeout(function () {
+                        if (_isDead(video)) return;
+                        _tryPlay(video, elementId, null);
+                    }, 400);
                 }
             }, 2000);
         });
@@ -347,12 +387,15 @@ var CanvasVideo = (function () {
          * Only act before first play to avoid interrupting normal buffering.
          */
         video.addEventListener('suspend', function () {
-            if (!started) {
+            if (!started && !_isDead(video)) {
                 setTimeout(function () {
-                    if (!started) {
+                    if (!started && !_isDead(video)) {
                         console.warn('[CanvasVideo] suspend before start, forcing:', elementId);
                         video.load();
-                        setTimeout(function () { _tryPlay(video, elementId, null); }, 400);
+                        setTimeout(function () {
+                            if (_isDead(video)) return;
+                            _tryPlay(video, elementId, null);
+                        }, 400);
                     }
                 }, 2000);
             }
@@ -364,16 +407,37 @@ var CanvasVideo = (function () {
          */
         video.addEventListener('error', function () {
             _stopWatchdog();
+
+            /* Disposed / detached: stay silent. cleanup() empties the source,
+               which itself raises an error event — logging and retrying here
+               is what produced the endless console spam after leaving the page. */
+            if (_isDead(video)) return;
+
             var code = video.error ? video.error.code : '?';
             console.error('[CanvasVideo] error code=' + code + ':', elementId, el.src);
-            if (loop) {
-                setTimeout(function () {
-                    if (!video.parentNode) return;
-                    console.log('[CanvasVideo] error retry:', elementId);
-                    video.load();
-                    setTimeout(function () { _tryPlay(video, elementId, null); }, 500);
-                }, 1500);
+
+            if (!loop) return;
+
+            /* Bounded recovery: a genuinely bad URL (code 4) must not retry
+               for ever. */
+            errorRetries++;
+            if (errorRetries > MAX_ERROR_RETRIES) {
+                console.error('[CanvasVideo] giving up after ' + MAX_ERROR_RETRIES +
+                              ' failed retries — source unplayable:', elementId, el.src);
+                return;
             }
+
+            var attempt = errorRetries;
+            setTimeout(function () {
+                if (_isDead(video)) return;
+                console.log('[CanvasVideo] error retry ' + attempt + '/' +
+                            MAX_ERROR_RETRIES + ':', elementId);
+                video.load();
+                setTimeout(function () {
+                    if (_isDead(video)) return;
+                    _tryPlay(video, elementId, null);
+                }, 500);
+            }, 1500);
         });
 
         /* ── Source ─────────────────────────────────────────────── */
@@ -626,7 +690,9 @@ var CanvasVideo = (function () {
      *           Used by _softRestart to escalate to _hardRestart.
      */
     function _tryPlay(video, id, onReject) {
-        if (!video || !video.parentNode) return;
+        /* Disposed / detached videos are never played again — and their
+           rejected play promises are never logged (the page is gone). */
+        if (_isDead(video)) return;
         var p;
         try { p = video.play(); } catch (e) {
             console.warn('[CanvasVideo] play() threw:', id, e);
@@ -635,6 +701,7 @@ var CanvasVideo = (function () {
         }
         if (p && typeof p.then === 'function') {
             p.catch(function (err) {
+                if (_isDead(video)) return;
                 console.warn('[CanvasVideo] play rejected:', id, err && err.message);
                 if (!video.muted) {
                     /* Retry muted */
@@ -643,6 +710,7 @@ var CanvasVideo = (function () {
                     try { p2 = video.play(); } catch (e2) {}
                     if (p2 && typeof p2.then === 'function') {
                         p2.catch(function (e2) {
+                            if (_isDead(video)) return;
                             console.error('[CanvasVideo] muted play also rejected:', id, e2 && e2.message);
                             if (onReject) onReject();
                         });
@@ -674,12 +742,24 @@ var CanvasVideo = (function () {
             }
         } catch (e) { window._currentHcapMedia = null; }
 
-        /* Stop watchdogs + remove overlays */
+        /* Stop watchdogs + remove overlays.
+           ORDER MATTERS: mark the element disposed FIRST. Emptying the source
+           fires an 'error' event, and _isDead() must already be true by then or
+           the error handler starts a retry chain that outlives the page. */
         for (var i = 0; i < activeVideos.length; i++) {
             var vd = activeVideos[i];
             if (vd.stopWatchdog) { try { vd.stopWatchdog(); } catch(e){} }
             if (vd.video) {
-                try { vd.video.pause(); vd.video.src = ''; vd.video.load(); } catch (e) {}
+                try {
+                    vd.video._cvDisposed = true;
+                    vd.video.pause();
+                    /* Drop <source> children (HLS path) before releasing the src */
+                    while (vd.video.firstChild) vd.video.removeChild(vd.video.firstChild);
+                    /* removeAttribute, not src='' — an empty src resolves against
+                       the document URL and makes the TV fetch the page itself. */
+                    vd.video.removeAttribute('src');
+                    vd.video.load();
+                } catch (e) {}
             }
             if (vd.wrapDiv && vd.wrapDiv.parentNode) {
                 vd.wrapDiv.parentNode.removeChild(vd.wrapDiv);
@@ -689,6 +769,14 @@ var CanvasVideo = (function () {
 
         var leftovers = document.querySelectorAll('.canvas-video-wrap');
         for (var j = 0; j < leftovers.length; j++) {
+            /* Dispose any stray <video> inside so it cannot retry either */
+            try {
+                var strays = leftovers[j].getElementsByTagName('video');
+                for (var s = 0; s < strays.length; s++) {
+                    strays[s]._cvDisposed = true;
+                    try { strays[s].pause(); } catch (e) {}
+                }
+            } catch (e) {}
             if (leftovers[j].parentNode) leftovers[j].parentNode.removeChild(leftovers[j]);
         }
 

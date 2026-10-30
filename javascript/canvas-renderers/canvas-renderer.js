@@ -25,18 +25,31 @@ var CanvasRenderer = (function() {
      */
     function render(onReady) {
         console.log('[CanvasRenderer] ===== Starting Canvas Render =====');
-        
+
+        // onReady completes the line loader (and drives autoplay/navTimer
+        // callers), so it must fire exactly once on EVERY exit path —
+        // success, early return or error — otherwise the bar sticks at 85 %.
+        var _readyFn = onReady;
+        onReady = function () {
+            if (typeof _readyFn !== 'function') return;
+            var fn = _readyFn;
+            _readyFn = null;
+            try { fn(); } catch (e) { console.warn('[CanvasRenderer] onReady threw:', e); }
+        };
+
         var canvas = document.getElementById('templateCanvas');
         if (!canvas) {
             console.error('[CanvasRenderer] Canvas element #templateCanvas not found');
+            onReady();
             return;
         }
 
         currentCanvas = canvas;
         ctx = canvas.getContext('2d');
-        
+
         if (!ctx) {
             console.error('[CanvasRenderer] Cannot get 2D context');
+            onReady();
             return;
         }
 
@@ -66,6 +79,12 @@ var CanvasRenderer = (function() {
         if (typeof CanvasSlideshow !== 'undefined' && CanvasSlideshow.cleanup) {
             CanvasSlideshow.cleanup();
         }
+        // SOFT cleanup only — navTimer countdowns keep their progress across a
+        // re-render of the SAME template (CanvasRenderer.refresh()), and are
+        // fully reset by CanvasNavTimer.reset() when the page is left.
+        if (typeof CanvasNavTimer !== 'undefined' && CanvasNavTimer.cleanup) {
+            CanvasNavTimer.cleanup();
+        }
 
         // Get template data
         var originalTemplateData;
@@ -73,11 +92,13 @@ var CanvasRenderer = (function() {
             originalTemplateData = Main.jsonTemplateData && Main.jsonTemplateData.template_json;
         } catch (e) {
             console.error('[CanvasRenderer] Error accessing template data:', e);
+            onReady();
             return;
         }
 
         if (!originalTemplateData || !originalTemplateData.canvas || !originalTemplateData.elements) {
             console.error('[CanvasRenderer] Invalid template_json structure');
+            onReady();
             return;
         }
 
@@ -194,23 +215,31 @@ var CanvasRenderer = (function() {
         var _canvas         = canvas;
 
         function _doRender() {
-            if (_bgType === 'image' && _canvasConfig.backgroundImage) {
-                renderBackgroundThenElements(_ctx, _canvasConfig, _canvasConfig.width, _canvasConfig.height, _sortedElements, _canvas, onReady);
-            } else if (_bgType === 'video') {
-                CanvasBackground.render(_ctx, _canvasConfig, _canvasConfig.width, _canvasConfig.height, onReady);
-                renderAllElements(_ctx, _sortedElements, _canvas);
-            } else {
-                CanvasBackground.render(_ctx, _canvasConfig, _canvasConfig.width, _canvasConfig.height);
-                renderAllElements(_ctx, _sortedElements, _canvas);
-                if (typeof onReady === 'function') {
+            try {
+                if (_bgType === 'image' && _canvasConfig.backgroundImage) {
+                    renderBackgroundThenElements(_ctx, _canvasConfig, _canvasConfig.width, _canvasConfig.height, _sortedElements, _canvas, onReady);
+                } else if (_bgType === 'video' && _canvasConfig.backgroundVideo) {
+                    CanvasBackground.render(_ctx, _canvasConfig, _canvasConfig.width, _canvasConfig.height, onReady);
+                    renderAllElements(_ctx, _sortedElements, _canvas);
+                } else {
+                    CanvasBackground.render(_ctx, _canvasConfig, _canvasConfig.width, _canvasConfig.height);
+                    renderAllElements(_ctx, _sortedElements, _canvas);
                     requestAnimationFrame(function() { requestAnimationFrame(onReady); });
                 }
+            } catch (e) {
+                console.error('[CanvasRenderer] Render error:', e);
+                onReady();
             }
             console.log('[CanvasRenderer] ===== Canvas Render Complete =====');
         }
 
         if (typeof CanvasFontLoader !== 'undefined') {
-            CanvasFontLoader.loadFromTemplate(originalTemplateData, _doRender);
+            try {
+                CanvasFontLoader.loadFromTemplate(originalTemplateData, _doRender);
+            } catch (e) {
+                console.error('[CanvasRenderer] Font loader error, rendering anyway:', e);
+                _doRender();
+            }
         } else {
             _doRender();
         }
@@ -238,16 +267,24 @@ var CanvasRenderer = (function() {
         var fit     = canvasConfig.backgroundFit || 'cover';
 
         function _drawAndFinish(bgImg) {
-            cachedBgImage = bgImg; cachedBgFit = fit; cachedBgOpacity = opacity;
-            ctx.save();
-            ctx.globalAlpha = opacity;
-            CanvasBase.drawImageWithFit(ctx, bgImg, 0, 0, width, height, fit);
-            ctx.restore();
-            renderAllElements(ctx, sortedElements, canvas);
+            try {
+                cachedBgImage = bgImg; cachedBgFit = fit; cachedBgOpacity = opacity;
+                ctx.save();
+                ctx.globalAlpha = opacity;
+                CanvasBase.drawImageWithFit(ctx, bgImg, 0, 0, width, height, fit);
+                ctx.restore();
+                renderAllElements(ctx, sortedElements, canvas);
+            } catch (e) {
+                console.error('[CanvasRenderer] Render error after bg image:', e);
+            }
             if (typeof onReady === 'function') requestAnimationFrame(function() { requestAnimationFrame(onReady); });
         }
         function _onError() {
-            renderAllElements(ctx, sortedElements, canvas);
+            try {
+                renderAllElements(ctx, sortedElements, canvas);
+            } catch (e) {
+                console.error('[CanvasRenderer] Render error after bg image failure:', e);
+            }
             if (typeof onReady === 'function') requestAnimationFrame(function() { requestAnimationFrame(onReady); });
         }
 
@@ -327,7 +364,7 @@ var CanvasRenderer = (function() {
                 }
                 break;
 
-             case 'qrcode':
+            case 'qrcode':
                 /* New explicit QR code type */
                 if (typeof CanvasQr !== 'undefined') {
                      CanvasQr.render(ctx, el);
@@ -377,7 +414,16 @@ var CanvasRenderer = (function() {
             case 'ticker':
                 CanvasTicker.render(ctx, el, canvas);
                 break;
-                
+
+            case 'navtimer':
+                /* Auto-navigation timer: startDelay -> duration countdown ->
+                   runs actionType/actionValue exactly like an OK key press.
+                   Rendered as a DOM overlay (no canvas drawing).            */
+                if (typeof CanvasNavTimer !== 'undefined') {
+                    CanvasNavTimer.render(ctx, el, canvas);
+                }
+                break;
+
             default:
                 console.warn('[CanvasRenderer] Unknown element type:', el.type);
                 renderGenericElement(ctx, el);
@@ -632,6 +678,13 @@ var CanvasRenderer = (function() {
         if (typeof CanvasGif !== 'undefined' && CanvasGif.cleanup) {
             CanvasGif.cleanup();
         }
+        // Release video overlays + the hardware video plane (SAMSUNG: avplay
+        // instead of LG's HCAP plane). Action cards now
+        // delegate their background video to CanvasVideo, so this must run on
+        // full cleanup (navigation away) as well — not only per-render.
+        if (typeof CanvasVideo !== 'undefined' && CanvasVideo.cleanup) {
+            CanvasVideo.cleanup();
+        }
         if (typeof CanvasSlideshow !== 'undefined' && CanvasSlideshow.cleanup) {
             CanvasSlideshow.cleanup();
         }
@@ -649,6 +702,38 @@ var CanvasRenderer = (function() {
         }
         if (typeof CanvasTicker !== 'undefined' && CanvasTicker.cleanup) {
             CanvasTicker.cleanup();
+        }
+        /* ── FIX: these were cleaned only at the START of render(), never on
+           cleanup(). Leaving the page (EXIT to home) therefore left their DOM
+           overlays and timers alive:
+             - CanvasVideo : <video> overlays whose error/stall recovery kept
+                             reloading a dead source forever, flooding the
+                             console long after the guest was on the home screen
+             - CanvasClock : one setInterval per clock, ticking every second
+             - Text/Image/Qr/Shapes : orphaned DOM overlays
+           cleanup() now mirrors the render() prologue exactly.            */
+        if (typeof CanvasVideo !== 'undefined' && CanvasVideo.cleanup) {
+            CanvasVideo.cleanup();
+        }
+        if (typeof CanvasClock !== 'undefined' && CanvasClock.cleanup) {
+            CanvasClock.cleanup();
+        }
+        if (typeof CanvasText !== 'undefined' && CanvasText.cleanup) {
+            CanvasText.cleanup();
+        }
+        if (typeof CanvasImage !== 'undefined' && CanvasImage.cleanup) {
+            CanvasImage.cleanup();
+        }
+        if (typeof CanvasQr !== 'undefined' && CanvasQr.cleanup) {
+            CanvasQr.cleanup();
+        }
+        if (typeof CanvasShapes !== 'undefined' && CanvasShapes.cleanup) {
+            CanvasShapes.cleanup();
+        }
+        // HARD reset — the page is being left (EXIT / dynamicPage jump), so
+        // pending navTimer countdowns must be dropped, not resumed.
+        if (typeof CanvasNavTimer !== 'undefined' && CanvasNavTimer.reset) {
+            CanvasNavTimer.reset();
         }
     }
 

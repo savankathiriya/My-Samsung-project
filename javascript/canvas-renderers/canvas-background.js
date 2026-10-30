@@ -123,7 +123,11 @@ var CanvasBackground = (function () {
     ================================================================ */
     function createBackgroundVideo(config, screenW, screenH, onReady) {
         var src = (config.backgroundVideo || '').trim();
-        if (!src) { cleanupVideo(); return; }
+        if (!src) {
+            cleanupVideo();
+            if (typeof onReady === 'function') onReady();
+            return;
+        }
 
         /* Normalise protocol early so we can compare against existing src */
         if (src.indexOf('http://') !== 0 && src.indexOf('https://') !== 0) {
@@ -133,8 +137,10 @@ var CanvasBackground = (function () {
         var opacity = typeof config.backgroundOpacity !== 'undefined'
                       ? config.backgroundOpacity : 1;
 
-        /* ── If the same video is already playing, just update opacity ── */
-        if (_bgVideo && _bgVideoWrap &&
+        /* ── If the same video is already playing, just update opacity ──
+           Only reuse it while it is still in the DOM: a page re-render clears
+           #mainContent, which detaches the old wrap but leaves these refs set. */
+        if (_bgVideo && _bgVideoWrap && document.body.contains(_bgVideoWrap) &&
             (_bgVideo.src === src ||
              (_bgVideo.querySelector && (function () {
                  var s = _bgVideo.querySelector('source');
@@ -146,6 +152,9 @@ var CanvasBackground = (function () {
                 _ov.style.opacity = String(Math.max(0, Math.min(1, 1 - opacity)));
             }
             console.log('[CanvasBackground] BG video already running -- opacity updated to', opacity);
+            if (typeof onReady === 'function') {
+                requestAnimationFrame(function () { requestAnimationFrame(onReady); });
+            }
             return;
         }
 

@@ -27,9 +27,9 @@
          schemes. WITHOUT IT, IP MULTICAST LIVE TV DOES NOT WORK. Needs the
          partner streamingtvplayer privilege to actually function, but the
          script tag is harmless before that. -->
-    <script type="text/javascript" src="$WEBAPIS/avplayextension/avplayextension.js"></script>
-
     <script type="text/javascript" src="$WEBAPIS/webapis/webapis.js"></script>
+    <!-- must load AFTER webapis.js (same order as Samsung TEPRFIPTV sample) -->
+    <script type="text/javascript" src="$WEBAPIS/avplayextension/avplayextension.js"></script>
 
     <!-- ================================================================
          CONNECTION WARM-UP

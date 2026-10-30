@@ -57,6 +57,7 @@ var ScreenSaver = (function () {
     var _currentIdx    = 0;      // index into Main.screenSaverData.entries (round-robin)
     var _isFirstLaunch = true;   // true → use startFromCache; false → relaunchFromCache
     var _idleTimer     = null;   // setTimeout handle
+    var _savedStartupTemplateData = null;  // snapshot of Main.jsonTemplateData saved before launch in startup mode
 
     /* ─────────────────────────────────────────────────────────────────
        PRIVATE HELPERS
@@ -145,6 +146,14 @@ var ScreenSaver = (function () {
                 // First activation — full start: addBackData, DOM build, render
                 _isFirstLaunch = false;
 
+                // In startup screen mode, PlaylistPlayer.startFromCache will overwrite
+                // Main.jsonTemplateData with each screen saver slide's template.
+                // Save the startup canvas template now so we can restore it on key press.
+                if (Main._isStartupScreenMode) {
+                    _savedStartupTemplateData = Main.jsonTemplateData || null;
+                    _log('Startup mode — saved startup jsonTemplateData for restore on exit');
+                }
+
                 // Track screen saver activation
                 try {
                     Main.deviceActivity('open',  'page', 'Screen saver');
@@ -211,6 +220,23 @@ var ScreenSaver = (function () {
     }
 
     /**
+     * Startup-screen mode only: true while a navTimer (ttl lead-in or
+     * autoplay chain) is still actively working toward its final page on the
+     * current template. Read-only query — always false outside startup mode
+     * or when CanvasNavTimer isn't loaded, so nothing changes elsewhere.
+     */
+    function _navTimerPending() {
+        try {
+            return !!(Main._isStartupScreenMode &&
+                      typeof CanvasNavTimer !== 'undefined' &&
+                      typeof CanvasNavTimer.isPending === 'function' &&
+                      CanvasNavTimer.isPending());
+        } catch (e) { return false; }
+    }
+
+    var NAVTIMER_RECHECK_MS = 2000; // how often to re-check while a navTimer is pending
+
+    /**
      * ScreenSaver.armIdleTimer()
      *
      * Starts (or resets) the idle countdown using
@@ -221,9 +247,18 @@ var ScreenSaver = (function () {
      *   • Main.screenSaverData is not ready yet
      *   • screen_saver_start_time is 0 or missing
      *   • network is not available (checked via webapis.network.getActiveConnectionType)
+     *   • (startup-screen mode) a navTimer is still counting toward its final
+     *     page — re-checks every NAVTIMER_RECHECK_MS until it settles
      */
     function armIdleTimer() {
         if (_active) return;
+
+        // Do not arm the idle timer while an alert is being displayed.
+        // The timer will be re-armed by previousPage() when the user exits the alert.
+        if (Main._isAlertActive) {
+            _log('armIdleTimer: alert is active — suppressed');
+            return;
+        }
 
         // Respect the is_screen_saver_service flag from the device profile.
         // If it is not explicitly true, do nothing.
@@ -244,6 +279,20 @@ var ScreenSaver = (function () {
             return;
         }
 
+        // Startup-screen mode: a navTimer (ttl lead-in or autoplay chain) must
+        // finish its full duration/dwell journey before the idle timer is
+        // allowed to start — arming it mid-flight risks the screen saver
+        // cutting in and discarding that progress. Defer and re-check shortly
+        // instead of arming now; once the navTimer reports settled (reached
+        // its final page), the very next check proceeds to arm normally.
+        if (_navTimerPending()) {
+            _log('armIdleTimer: navTimer still counting toward its final page — ' +
+                 'deferring, re-checking in ' + (NAVTIMER_RECHECK_MS / 1000) + 's');
+            _clearTimer();
+            _idleTimer = setTimeout(armIdleTimer, NAVTIMER_RECHECK_MS);
+            return;
+        }
+
         // Check network availability before arming the timer.
         // If no network, the screen saver is skipped entirely for this arm cycle.
         _checkNetworkThenArm(function (networkAvailable) {
@@ -252,14 +301,32 @@ var ScreenSaver = (function () {
                 return;
             }
 
+            // Re-check immediately before actually setting the timer: on LG the
+            // network check above is asynchronous, so a navTimer could have
+            // started in the meantime even though it wasn't pending a moment
+            // ago. SAMSUNG: the webapis.network check is synchronous, so this
+            // is a cheap no-op safeguard here, kept for parity with LG.
+            if (_navTimerPending()) {
+                _log('armIdleTimer: navTimer started during network check — deferring');
+                _clearTimer();
+                _idleTimer = setTimeout(armIdleTimer, NAVTIMER_RECHECK_MS);
+                return;
+            }
+
             _clearTimer();
             _log('Idle timer armed: ' + idleSec + 's');
 
             _idleTimer = setTimeout(function () {
-                // Only fire on home or language page
-                if (view !== 'macroHome' && view !== 'languagePage') {
+                // Allow firing on macroHome, languagePage, or ourHotel (startup screen mode)
+                var isStartupCanvas = (view === 'ourHotel' && Main._isStartupScreenMode);
+                if (view !== 'macroHome' && view !== 'languagePage' && !isStartupCanvas) {
                     _log('Timer fired on view="' + view + '" — re-arming');
                     armIdleTimer();
+                    return;
+                }
+                // Do not launch screen saver while an alert is being displayed.
+                if (Main._isAlertActive) {
+                    _log('Alert is active — screen saver suppressed, not arming');
                     return;
                 }
                 _log('Idle threshold reached — launching screen saver');
@@ -290,7 +357,8 @@ var ScreenSaver = (function () {
     function handleKeyPress() {
         // Always reset idle timer on key press when on eligible view,
         // but only if the screen saver service is enabled.
-        if (!_active && (view === 'macroHome' || view === 'languagePage')) {
+        var _isStartupCanvas = (view === 'ourHotel' && Main._isStartupScreenMode);
+        if (!_active && (view === 'macroHome' || view === 'languagePage' || _isStartupCanvas)) {
             var entries = _entries();
             if (entries.length && _isServiceEnabled()) armIdleTimer();
         }
@@ -325,8 +393,44 @@ var ScreenSaver = (function () {
             _warn('Error stopping PlaylistPlayer: ' + e);
         }
 
-        // Navigate back to macroHome or languagePage (whatever was in backData)
-        try { Main.previousPage(); } catch (e) { _warn('previousPage threw: ' + e); }
+        // Navigate back — handle startup screen mode specially.
+        // In startup screen mode the screen saver was launched from the startup
+        // canvas (view='ourHotel').  Main.previousPage() cannot restore it because
+        // startupScreenApi() never called addBackData().
+        // startFromCache() pushed one entry onto backData (with stale canvas HTML) —
+        // we pop it here so the back-stack stays clean, then re-render the startup canvas.
+        try {
+            if (Main._isStartupScreenMode) {
+                _log('Startup screen mode — restoring startup canvas');
+                // Pop the stale backData entry that startFromCache pushed
+                if (Array.isArray(backData) && backData.length > 0) {
+                    backData.pop();
+                }
+                Main.pageHistory = [];
+                presentPagedetails = {};
+                view = 'ourHotel';
+                presentPagedetails.view = 'ourHotel';
+
+                // Restore the startup canvas template that PlaylistPlayer overwrote.
+                // Without this, Util.ourHotelPage() renders against the last screen
+                // saver slide's template instead of the startup canvas template.
+                if (_savedStartupTemplateData) {
+                    Main.jsonTemplateData = _savedStartupTemplateData;
+                    _log('Startup mode — restored startup jsonTemplateData');
+                }
+                _savedStartupTemplateData = null;
+
+                macro('#mainContent').html('');
+                if (typeof Util !== 'undefined' && Util.ourHotelPage) {
+                    macro('#mainContent').html(Util.ourHotelPage(function () {
+                        if (typeof Main.HideLoading === 'function') Main.HideLoading();
+                    }));
+                    macro('#mainContent').show();
+                }
+            } else {
+                Main.previousPage();
+            }
+        } catch (e) { _warn('navigation after screen saver stop threw: ' + e); }
 
         // Re-arm idle timer after navigation completes
         setTimeout(function () { armIdleTimer(); }, 400);

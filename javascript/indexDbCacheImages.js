@@ -370,7 +370,8 @@ Main.LOCAL_ASSET_NAMES = [
   'restart',
   'selection3',
   'undo',
-  'wifi'
+  'wifi',
+  'troubleshoot'
 ];
 
 /**
@@ -525,5 +526,230 @@ Main.cacheLocalAssets = function (callback) {
     Main.dbInit(function () { proceed(); });   // proceed() is safe without a db
   } else {
     proceed();
+  }
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  HOME BACKGROUND IMAGE CACHE  (multiple images: homeBg_0, homeBg_1, …)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Main.cacheAllHomeBgImages(urls, callback)
+ *
+ * Fetches every URL in the `home_screen_bg` array, stores each blob in IDB
+ * under keys  homeBg_0, homeBg_1, … and populates
+ * Main._cachedHomeBackgroundUrls[]  with the resulting blob: URLs.
+ *
+ * If only one URL is present the behaviour is identical to the old single-image
+ * path (blob stored as "bgImage" for backwards-compat AND "homeBg_0").
+ *
+ * callback() is called once all images are processed (success or fail each).
+ */
+Main.cacheAllHomeBgImages = function (urls, callback) {
+  if (!urls || !urls.length) {
+    if (typeof callback === 'function') callback();
+    return;
+  }
+
+  Main._cachedHomeBackgroundUrls = Main._cachedHomeBackgroundUrls || [];
+
+  var total = urls.length;
+  var done  = 0;
+
+  function finish() {
+    done++;
+    if (done >= total && typeof callback === 'function') callback();
+  }
+
+  urls.forEach(function (url, idx) {
+    var key = 'homeBg_' + idx;
+
+    Main.cacheImageToDB(url, function (blobUrl) {
+      var resolved = blobUrl || url;
+
+      Main._cachedHomeBackgroundUrls[idx] = resolved;
+
+      // Keep legacy cachedBgBlobUrl pointing at the first image so all
+      // existing code that reads it (language page, casting page, etc.)
+      // continues to work without any changes.
+      if (idx === 0) {
+        Main.cachedBgBlobUrl = resolved;
+        // cacheImageToDB() only writes the legacy "bgImage" record when it is
+        // called with that key — here we used "homeBg_0", so mirror the blob
+        // into "bgImage" as well.  getCachedImageURL(), getBackgroundImageUrl()
+        // and getImageUrl('menu_screen_bg') all read that key straight out of
+        // IDB, and without this copy they find nothing after a cache clear.
+        return Main.copyCachedImage('homeBg_0', 'bgImage', finish);
+      }
+
+      finish();
+    }, key);
+  });
+};
+
+/**
+ * Main.copyCachedImage(fromKey, toKey, callback)
+ *
+ * Duplicates an already-stored blob inside IDB under a second key, without
+ * re-downloading it.  Used to keep the legacy "bgImage" record in sync with
+ * homeBg_0 so older readers keep working.  Always invokes callback().
+ */
+Main.copyCachedImage = function (fromKey, toKey, callback) {
+  var done = function () { if (typeof callback === 'function') callback(); };
+
+  if (!Main.db) { return done(); }
+
+  try {
+    var tx    = Main.db.transaction(['images'], 'readwrite');
+    var store = tx.objectStore('images');
+    var req   = store.get(fromKey);
+
+    req.onsuccess = function (e) {
+      var blob = e.target.result;
+      if (!blob) { return done(); }
+      try {
+        var put = store.put(blob, toKey);
+        put.onsuccess = done;
+        put.onerror   = done;
+      } catch (ex) {
+        console.warn('[Cache] copy', fromKey, '->', toKey, 'failed', ex);
+        done();
+      }
+    };
+
+    req.onerror = done;
+  } catch (ex) {
+    console.warn('[Cache] copy transaction error', fromKey, '->', toKey, ex);
+    done();
+  }
+};
+
+/**
+ * Main.loadLegacyBgFromIDB(callback)
+ *
+ * Reads the legacy single-image "bgImage" record and returns a blob: URL for
+ * it (or null).  Also sets Main.cachedBgBlobUrl and re-writes the blob as
+ * homeBg_0 so subsequent boots take the normal path.
+ */
+Main.loadLegacyBgFromIDB = function (callback) {
+  var done = function (url) { if (typeof callback === 'function') callback(url || null); };
+
+  if (!Main.db) { return done(null); }
+
+  try {
+    var tx    = Main.db.transaction(['images'], 'readwrite');
+    var store = tx.objectStore('images');
+    var req   = store.get('bgImage');
+
+    req.onsuccess = function (e) {
+      var blob = e.target.result;
+      if (!blob) {
+        console.warn('[Offline] legacy bgImage not found in IDB either');
+        return done(null);
+      }
+      var blobUrl = null;
+      try {
+        blobUrl = URL.createObjectURL(blob);
+        Main.cachedBgBlobUrl = blobUrl;
+        console.log('[Offline] Home BG 0 loaded from legacy bgImage key');
+      } catch (ex) {
+        console.warn('[Offline] createObjectURL failed for legacy bgImage', ex);
+        return done(null);
+      }
+      // Migrate forward so the next boot finds homeBg_0 directly.
+      try { store.put(blob, 'homeBg_0'); } catch (ex) {}
+      done(blobUrl);
+    };
+
+    req.onerror = function () { done(null); };
+  } catch (ex) {
+    console.warn('[Offline] IDB transaction error for legacy bgImage', ex);
+    done(null);
+  }
+};
+
+/**
+ * Main.loadHomeBgImagesFromIDB(callback)
+ *
+ * Offline path: reads every homeBg_N blob that was previously stored in IDB
+ * and populates Main._cachedHomeBackgroundUrls[] with blob: URLs.
+ *
+ * The count is derived from  Main.templateApiData.home_screen_bg  (persisted
+ * in localStorage as cachedTemplateApiData).  Falls back to trying homeBg_0
+ * only if templateApiData is unavailable.
+ *
+ * callback() fires when all lookups complete.
+ */
+Main.loadHomeBgImagesFromIDB = function (callback) {
+  var bgUrls = (Main.templateApiData &&
+                Main.templateApiData.home_screen_bg) || [];
+
+  // If templateApiData is missing we still try to load at least homeBg_0
+  if (!bgUrls.length) {
+    bgUrls = ['__placeholder__']; // one slot; real URL doesn't matter for IDB key
+  }
+
+  Main._cachedHomeBackgroundUrls = Main._cachedHomeBackgroundUrls || [];
+
+  var total = bgUrls.length;
+  var done  = 0;
+
+  function finish() {
+    done++;
+    if (done >= total && typeof callback === 'function') callback();
+  }
+
+  function loadOne(idx) {
+    var key = 'homeBg_' + idx;
+
+    if (!Main.db) { return finish(); }
+
+    try {
+      var tx    = Main.db.transaction(['images'], 'readonly');
+      var store = tx.objectStore('images');
+      var req   = store.get(key);
+
+      req.onsuccess = function (e) {
+        var blob = e.target.result;
+        if (blob) {
+          try {
+            var blobUrl = URL.createObjectURL(blob);
+            Main._cachedHomeBackgroundUrls[idx] = blobUrl;
+
+            // Keep legacy pointer for index 0
+            if (idx === 0) {
+              Main.cachedBgBlobUrl = blobUrl;
+              console.log('[Offline] Home BG 0 loaded from IDB (homeBg_0)');
+            } else {
+              console.log('[Offline] Home BG ' + idx + ' loaded from IDB');
+            }
+          } catch (ex) {
+            console.warn('[Offline] createObjectURL failed for', key, ex);
+          }
+        } else if (idx === 0) {
+          // Slot missing — this is a device that cached its background with an
+          // older build, which only ever wrote the "bgImage" key.  Fall back to
+          // it so the language/home pages still get a background after upgrade
+          // instead of staying blank until the cache is cleared.
+          console.warn('[Offline] homeBg_0 not in IDB — falling back to legacy bgImage key');
+          return Main.loadLegacyBgFromIDB(function (blobUrl) {
+            if (blobUrl) { Main._cachedHomeBackgroundUrls[0] = blobUrl; }
+            finish();
+          });
+        } else {
+          console.warn('[Offline]', key, 'not found in IDB');
+        }
+        finish();
+      };
+
+      req.onerror = function () { finish(); };
+    } catch (ex) {
+      console.warn('[Offline] IDB transaction error for', key, ex);
+      finish();
+    }
+  }
+
+  for (var i = 0; i < total; i++) {
+    loadOne(i);
   }
 };

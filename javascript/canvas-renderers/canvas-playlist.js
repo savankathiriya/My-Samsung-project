@@ -106,6 +106,15 @@ var PlaylistPlayer = (function () {
             'CanvasImage',   'CanvasText',       'CanvasClock',   'CanvasShapes',
             'CanvasSlideshow','CanvasAction',    'CanvasVideo',   'CanvasBackground'
         ];
+        /* navTimer: hard reset AND cancel any autoplay chain — a slideshow
+           owns the screen, so no pending auto-navigation (countdown or
+           sequence hop) may survive into the next slide. */
+        try {
+            if (typeof CanvasNavTimer !== 'undefined') {
+                if (CanvasNavTimer.cancelAutoplay) CanvasNavTimer.cancelAutoplay('playlist started');
+                if (CanvasNavTimer.reset)          CanvasNavTimer.reset();
+            }
+        } catch (e) {}
         for (var i = 0; i < mods.length; i++) {
             try {
                 var m = window[mods[i]];

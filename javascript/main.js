@@ -9,6 +9,7 @@ var Main = {
 // Pushed before navigating TO a dynamic page; popped when EXIT is pressed.
 Main.pageHistory = [];
 Main.cachedBgBlobUrl = null;
+Main._cachedHomeBackgroundUrls = [];
 var disableNavigation = false;
 // Screen-saver state is managed entirely by canvas-screensaver.js (ScreenSaver module).
 // Main.js only delegates to it — no inline state kept here.
@@ -93,6 +94,8 @@ Main.addBackData = function (path) {
   // menu item index and the menu-inner scroll offset so that
   // Main.previousPage() can restore exactly where the user was.
   if (view === 'macroHome') {
+    // Stop the home background slideshow when navigating away
+    try { Main.stopHomeBgSlideshow(); } catch (e) {}
     try {
       var focusedEl = macro('.imageFocus');
       var focusedId = focusedEl.attr('id') || '';
@@ -119,6 +122,30 @@ Main.addBackData = function (path) {
   }
   // ─────────────────────────────────────────────────────────────────
 
+  // ── Save canvas template state before leaving the ourHotel view ───
+  // htmlData is only an innerHTML snapshot, and a <canvas> serialises as
+  // an EMPTY element — its pixels are not part of the markup. So restoring
+  // htmlData alone brings the template back as a blank black box (no
+  // background, no cards). Keep the data needed to RE-RENDER it instead:
+  //   • jsonTemplateData  — the template payload Util.ourHotelPage() draws
+  //   • canvasPageHistory — the canvas back-stack, so EXIT still walks back
+  //     through the templates the guest visited before launching the app.
+  if (view === 'ourHotel') {
+    try {
+      presentPagedetails.jsonTemplateData  = Main.jsonTemplateData || null;
+      presentPagedetails.canvasPageHistory = Array.isArray(Main.pageHistory)
+                                             ? Main.pageHistory.slice()
+                                             : [];
+
+      console.log('[addBackData] Saved canvas template state | uuid:',
+                  (Main.jsonTemplateData && Main.jsonTemplateData.template_uuid) || '?',
+                  '| canvas history depth:', presentPagedetails.canvasPageHistory.length);
+    } catch (e) {
+      console.warn('[addBackData] Canvas state save failed:', e);
+    }
+  }
+  // ─────────────────────────────────────────────────────────────────
+
   if(path == "MyDevice" || path == "liveTv" || path == "casting" || path == "lgLgLiveTv" || path == "liveTvPlayer" || path == "ourHotel" || path == "playlist") {
     backData.push(presentPagedetails);
     presentPagedetails = {}
@@ -126,9 +153,29 @@ Main.addBackData = function (path) {
 }
 
 Main.previousPage = function () {
+  // Where are we about to land? A canvas template we are returning TO (the
+  // guest launched Live TV / an app FROM it) keeps its own back-stack — the
+  // stack is only stale when we are genuinely leaving the canvas view.
+  var _returningToCanvas = false;
+  try {
+    var _next = backData.length > 0 ? backData[backData.length - 1] : null;
+    _returningToCanvas = !!(_next && _next.view === 'ourHotel' && _next.jsonTemplateData);
+  } catch (e) {}
+
   // When truly leaving the ourHotel canvas view, the canvas page-history
   // stack is no longer valid — clear it so stale entries never interfere.
-  Main.pageHistory = [];
+  if (!_returningToCanvas) {
+    Main.pageHistory = [];
+    Main.clearRouteAnchor = null;   // left the canvas view — anchor no longer valid
+  }
+
+  // Same for a navTimer autoplay chain: we are leaving the canvas view, so
+  // no pending sequence hop may fire on top of the page we land on.
+  try {
+    if (typeof CanvasNavTimer !== 'undefined' && CanvasNavTimer.cancelAutoplay) {
+      CanvasNavTimer.cancelAutoplay('leaving the canvas view');
+    }
+  } catch (e) {}
 
   if(backData.length > 0) {
     presentPagedetails = backData[backData.length-1];
@@ -200,6 +247,7 @@ Main.previousPage = function () {
         macro("#mainContent").show();
         macro('.imageFocus').removeClass('imageFocus');
         macro('#lang_btn-0').addClass('imageFocus');
+        Navigation.updateLanguagePageTexts(0);
 
         try {
           if (typeof ScreenSaver !== 'undefined') ScreenSaver.armIdleTimer();
@@ -207,6 +255,127 @@ Main.previousPage = function () {
         return;
       } catch (e) {
         console.warn('[previousPage] Fast language re-render failed, falling back to HTML restore:', e);
+        // Fall through to HTML restore below
+      }
+    }
+
+    // ── RE-RENDER for the ourHotel canvas template ─────────────────────
+    // Reached when the guest launched Live TV / LG TV / MyDevice / an app
+    // FROM a canvas template — a dynamic page OR the startup-screen root —
+    // and is now coming back. The stored htmlData holds the <canvas> tag
+    // but none of its pixels, so restoring it would show a blank page.
+    // Re-draw the template from its saved payload instead.
+    //
+    // addBackData() always sets presentPagedetails.jsonTemplateData when
+    // leaving view 'ourHotel' (root startup canvas or a dynamic page alike),
+    // so that condition alone covers both cases. The one place they diverge
+    // is returning from an ALERT shown in startup-screen mode: _proceedToAlert
+    // tags the backData entry with _startupTemplateData (the ORIGINAL startup
+    // root template) because by the time addBackData ran, jsonTemplateData had
+    // already been overwritten with the alert's own template — restoring that
+    // would redisplay the alert instead of returning to the root canvas.
+    if (view === 'ourHotel' && presentPagedetails.jsonTemplateData) {
+      try {
+        var _isStartupRootReturn = !!presentPagedetails._startupTemplateData;
+        var _templateToRestore   = _isStartupRootReturn
+                                    ? presentPagedetails._startupTemplateData
+                                    : presentPagedetails.jsonTemplateData;
+
+        console.log('[previousPage] Re-rendering canvas template | uuid:',
+                    (_templateToRestore && _templateToRestore.template_uuid) || '?',
+                    '| startup-root return:', _isStartupRootReturn);
+
+        // The template payload the canvas renderer reads from.
+        Main.jsonTemplateData = _templateToRestore;
+
+        // Restore the canvas back-stack captured in addBackData() so EXIT
+        // keeps walking back through the templates visited before the app.
+        // An alert has no nested canvas history of its own, so on a
+        // startup-root return the stack is simply empty.
+        Main.pageHistory = _isStartupRootReturn
+          ? []
+          : (Array.isArray(presentPagedetails.canvasPageHistory)
+              ? presentPagedetails.canvasPageHistory.slice()
+              : []);
+
+        // Returning from an alert — clear the alert-active flag now that we
+        // are back on the startup canvas (harmless no-op outside startup mode).
+        if (_isStartupRootReturn) Main._isAlertActive = false;
+
+        // Live TV / LG TV / HDMI set these for the video plane. Undo them or
+        // the template paints onto a transparent body and reads as "missing".
+        // SAMSUNG: Navigation._makeAppLayerTransparent() also sets
+        // documentElement.style.background = 'none', so clear that too.
+        try {
+          document.body.style.background      = '';
+          document.body.style.backgroundColor = '';
+          document.documentElement.style.background      = '';
+          document.documentElement.style.backgroundColor = '';
+        } catch (e) {}
+
+        // Drop any leftover background-video wrapper from the previous visit.
+        try {
+          var _bgWrap = document.getElementById('bg-video-wrap');
+          if (_bgWrap && _bgWrap.parentNode) _bgWrap.parentNode.removeChild(_bgWrap);
+        } catch (e) {}
+
+        // navTimer starts from scratch — this is a fresh entry into the page.
+        try {
+          if (typeof CanvasNavTimer !== 'undefined' && CanvasNavTimer.reset) {
+            CanvasNavTimer.reset();
+          }
+        } catch (e) {}
+
+        // Show the line loader until the canvas has actually painted, so the
+        // guest never sees the empty black container.
+        try { _showCanvasLineLoader(); } catch (e) {}
+
+        var _canvasBackStart    = Date.now();
+        var _CANVAS_BACK_MIN_MS = 800;
+        var _canvasBackDone     = false;
+
+        function _canvasBackReady() {
+          if (_canvasBackDone) return;
+          _canvasBackDone = true;
+          var _remaining = _CANVAS_BACK_MIN_MS - (Date.now() - _canvasBackStart);
+          if (_remaining > 0) {
+            setTimeout(function () { try { _hideCanvasLineLoader(); } catch (e) {} }, _remaining);
+          } else {
+            try { _hideCanvasLineLoader(); } catch (e) {}
+          }
+        }
+
+        /* CanvasRenderer.render() returns early (and never calls onReady) when
+           the canvas node or template_json is unusable. Without this the line
+           loader would sit on screen forever. */
+        setTimeout(function () {
+          if (!_canvasBackDone) {
+            console.warn('[previousPage] Canvas onReady never fired — hiding loader');
+            _canvasBackReady();
+          }
+        }, 6000);
+
+        macro("#mainContent").html('');
+        macro("#mainContent").html(Util.ourHotelPage(_canvasBackReady));
+        macro("#mainContent").show();
+
+        // Screen-saver behavior differs by destination: the startup-screen
+        // ROOT acts like a home screen — idle still triggers it. A normal
+        // dynamic-page canvas reached from Home/MyDevice/LiveTV/etc. runs
+        // without it, same as a fresh entry.
+        try {
+          if (typeof ScreenSaver !== 'undefined') {
+            if (_isStartupRootReturn) {
+              ScreenSaver.armIdleTimer();
+            } else {
+              ScreenSaver.clearIdleTimer();
+            }
+          }
+        } catch (e) {}
+        return;
+      } catch (e) {
+        console.warn('[previousPage] Canvas re-render failed, falling back to HTML restore:', e);
+        try { _hideCanvasLineLoader(); } catch (_e) {}
         // Fall through to HTML restore below
       }
     }
@@ -245,6 +414,68 @@ Main.previousPage = function () {
  * The caller (navigation.js) is responsible for running canvas/video
  * cleanup BEFORE calling this function.
  */
+/**
+ * Main.applyClearRouteHistory(templateData)
+ *
+ * A template whose API payload carries  is_clear_route_history: true  becomes
+ * the ROOT of the canvas route. Every canvas page visited before it (including
+ * the one that was just pushed onto Main.pageHistory while navigating here) is
+ * forgotten, so this template behaves as if it were the first template opened.
+ *
+ * Consequence for the guest: pressing BACK / EXIT on such a template does NOT
+ * walk back through the previously visited templates — Main.navigateBackCanvas()
+ * finds an empty history and calls Main.previousPage(), which leaves the
+ * ourHotel canvas view entirely and lands on the home screen.
+ *
+ * Call it right after assigning Main.jsonTemplateData for a newly loaded
+ * template. Returns true when the history was actually cleared.
+ */
+// Most-recently-seen is_clear_route_history page. In STARTUP-screen mode, a
+// navTimer (ttl/autoplay) final destination — a dynamicScreen OR an app —
+// returns here on BACK/EXIT instead of being a dead-end. Last flagged page wins.
+// Reset when a fresh canvas visit starts or the canvas view is left. Stored in
+// every mode but only READ in startup mode, so normal ourHotel navigation is
+// never affected by it.
+Main.clearRouteAnchor = null;
+
+Main.applyClearRouteHistory = function (templateData) {
+  var data = templateData || Main.jsonTemplateData;
+  var flag = data ? data.is_clear_route_history : false;
+
+  if (flag !== true && flag !== 'true') return false;
+
+  var depth = Array.isArray(Main.pageHistory) ? Main.pageHistory.length : 0;
+  Main.pageHistory = [];
+
+  // Remember THIS page as the route anchor (last flagged page wins).
+  Main.clearRouteAnchor = {
+    uuid:             (data && data.template_uuid) || '',
+    jsonTemplateData: data
+  };
+
+  console.log('[Main] is_clear_route_history → route history cleared (dropped ' +
+              depth + ' canvas page(s)). Template ' +
+              ((data && data.template_uuid) || '?') +
+              ' stored as the route anchor.');
+  return true;
+};
+
+// Empty the canvas history but KEEP the stored is_clear_route_history anchor as
+// the single back entry, so BACK/EXIT returns to it. No anchor → empty, exactly
+// like before. Only called in startup-screen mode (see callers).
+Main.clearHistoryToAnchor = function () {
+  if (Main.clearRouteAnchor && Main.clearRouteAnchor.jsonTemplateData) {
+    Main.pageHistory = [{
+      uuid:             Main.clearRouteAnchor.uuid,
+      jsonTemplateData: Main.clearRouteAnchor.jsonTemplateData
+    }];
+    console.log('[Main] history reset to is_clear_route_history anchor:',
+                Main.clearRouteAnchor.uuid);
+  } else {
+    Main.pageHistory = [];
+  }
+};
+
 Main.navigateBackCanvas = function () {
   if (Array.isArray(Main.pageHistory) && Main.pageHistory.length > 0) {
     var prevEntry = Main.pageHistory.pop();
@@ -266,7 +497,18 @@ Main.navigateBackCanvas = function () {
     }
 
   } else {
-    // No canvas page history left — exit the ourHotel view entirely
+    // No canvas page history left.
+    // In startup-screen mode the startup canvas IS the root — block EXIT so
+    // the user stays on it (pressing EXIT does nothing, no previous page exists).
+    // Only block EXIT when backData is also empty — that means the user is
+    // truly on the root startup canvas with nothing to return to.
+    // If backData has entries (e.g. alert canvas on top of startup canvas base),
+    // EXIT must proceed to previousPage() so the user returns to the startup canvas.
+    if (Main._isStartupScreenMode && (!backData || backData.length === 0)) {
+      console.log('[Main] navigateBackCanvas: startup screen root — EXIT blocked, staying on startup canvas');
+      return;
+    }
+    // Normal mode, or startup mode with backData (alert on top): go back
     console.log('[Main] navigateBackCanvas: history empty, calling previousPage()');
     Main.previousPage();
   }
@@ -369,8 +611,17 @@ Main.showActivationScreen = function () {
  *
  * Returns true synchronously to signal "we are handling this offline" —
  * the actual page render happens asynchronously after images load from IDB.
+ *
+ * @param {boolean} [isNoInternet] - Pass true ONLY when called because
+ *   provision-auth failed due to no internet/network error. This function
+ *   is ALSO called on a successful (online) boot when a full cache already
+ *   exists, purely to skip the download screen — in that case the caller
+ *   must NOT pass true, since network calls (like the startup-screen
+ *   template fetch) work fine there. Main._restoredFromCache is set true
+ *   in BOTH cases, so it cannot be used to detect "no internet" — this
+ *   separate flag (Main._noInternet) can.
  */
-Main.restoreFromCacheAndOpenApp = function () {
+Main.restoreFromCacheAndOpenApp = function (isNoInternet) {
   console.log('[Offline] provision-auth failed — attempting to restore from localStorage cache');
 
   try {
@@ -425,6 +676,13 @@ Main.restoreFromCacheAndOpenApp = function () {
     // can skip network calls (e.g. getHomeData) and use IDB-only image loading.
     Main._restoredFromCache = true;
 
+    // Distinct from _restoredFromCache above: true ONLY when there is no
+    // internet (provision-auth network error). Used to bypass network-only
+    // logic (like the startup_screen canvas fetch below) that would silently
+    // fail and leave a blank screen when offline, but should still run
+    // normally on an online cache-hit boot.
+    Main._noInternet = (isNoInternet === true);
+
     // ── Start MQTT even during offline boot ──────────────────────────────
     // deviceProfile is already restored from localStorage cache above.
     // MqttClient.init() will attempt to connect; if the broker is unreachable
@@ -467,6 +725,56 @@ Main.restoreFromCacheAndOpenApp = function () {
       Main._guestInfoIntervalStarted = true;
       Main.guestInfoAfterInterval();
     }
+
+    // ── Start status heartbeat in offline mode ─────────────────
+    // startStatusHeartbeat() is normally started by deviceProfileApi()
+    // which is skipped in offline mode. We start it here instead.
+    // While internet is off, each tick hits the error callback (just logs).
+    // When internet comes back, the next tick's success callback runs
+    // normally — the device status payload reaches the backend again.
+    // The _statusHeartbeatStarted guard prevents a second interval
+    // from starting if deviceProfileApi() also runs later.
+    if (!Main._statusHeartbeatStarted) {
+      Main._statusHeartbeatStarted = true;
+      Main.startStatusHeartbeat();
+    }
+    // ─────────────────────────────────────────────────────────────────
+
+    // ── Apply the property's default volume in offline mode ─────
+    // applyDefaultVolume() is normally called by deviceProfileApi() which is
+    // skipped in offline mode. It needs no network at all — it only reads
+    // default_volume_level from the cached deviceProfile and pushes it to the
+    // TV (SAMSUNG: via tizen.tvaudiocontrol.setVolume) — so it works exactly
+    // the same with the internet down. Wrapped in try/catch so a missing or
+    // failing volume API can never abort the rest of the offline restore.
+    try {
+      Main.applyDefaultVolume();
+    } catch (volErr) {
+      console.warn('[Offline] applyDefaultVolume error:', volErr);
+    }
+    // ─────────────────────────────────────────────────────────────────
+
+    // ── Pre-fetch live TV channel data in offline mode ─────────
+    // prefetchAllChannelData() is normally called by deviceRegistrationAPi()
+    // after deviceProfileApi(), which never runs on this path. Deferred by 2s
+    // (same as the MQTT block above) so it never competes with the IndexedDB
+    // image-load chain that renders the language page.
+    // It is fire-and-forget: both channel-v2 and channel-feed are async ajax
+    // calls with their own error callbacks that fall back to localStorage, so
+    // if BOTH fail the app simply keeps the channel data already restored
+    // above and the UI stays fully usable — nothing here blocks the render.
+    // The try/catch is the last line of defence against a synchronous throw.
+    setTimeout(function () {
+      try {
+        if (pageDetails && pageDetails.access_token) {
+          Main.prefetchAllChannelData();
+        } else {
+          console.warn('[Offline] prefetchAllChannelData skipped — no access_token in cached pageDetails');
+        }
+      } catch (pfErr) {
+        console.warn('[Offline] prefetchAllChannelData error:', pfErr);
+      }
+    }, 2000);
     // ─────────────────────────────────────────────────────────────────
 
     // ── Render language page once all images are loaded from IndexedDB ───
@@ -474,13 +782,44 @@ Main.restoreFromCacheAndOpenApp = function () {
     // (no network fetches since we are offline).
     var _renderOfflineLangPage = function () {
       Main.HideLoading();
+
+      // startup_screen: if set, show the dynamic canvas as the root screen
+      // instead of the language page — same branching as the normal boot
+      // flow in Main.loadCachedImagesThenRender().
+      // NOTE: Main.startupScreenApi() always fetches the template over the
+      // network (no offline/IDB fallback). When we got here because the
+      // internet is actually down (Main._noInternet), calling it just fails
+      // silently and leaves a blank screen. So skip this branch only in that
+      // case and fall back to the language page below instead. (Do NOT use
+      // Main._restoredFromCache here — it is also true on an online
+      // cache-hit boot, where the network call works fine.)
+      var startupUuid = !Main._noInternet &&
+        Main.templateApiData && Main.templateApiData.startup_screen;
+      if (startupUuid) {
+        console.log('[Offline] startup_screen set:', startupUuid, '— rendering dynamic canvas as root (cache restore)');
+        Main.updateDeviceDetailsSendApi();
+        Main.deviceActivity("open", "page", "startup screen");
+        Main._isStartupScreenMode = true;
+        backData = [];
+        presentPagedetails = {};
+        Main.pageHistory = [];
+        Main.startupScreenApi(startupUuid);
+        return;
+      }
+
       view = "languagePage";
       presentPagedetails.view = view;
+
+      Main.updateDeviceDetailsSendApi();
+
+      Main.deviceActivity("open","page","welcome screen");
+
       macro("#mainContent").html('');
       macro("#mainContent").html(Util.languageSelection());
       macro("#mainContent").show();
       macro('.imageFocus').removeClass('imageFocus');
       macro('#lang_btn-0').addClass('imageFocus');
+      Navigation.updateLanguagePageTexts(0);
       console.log('[Offline] Language selection page rendered from cache');
     };
 
@@ -569,8 +908,21 @@ Main.restoreFromCacheAndOpenApp = function () {
       }
     };
 
-    // Step 1 — load background blob from IDB, then chain logo → icons → render
+    // Step 1 — load all home background blobs from IDB, then chain logo → icons → render
     var _loadOfflineBg = function () {
+      // loadHomeBgImagesFromIDB fills Main._cachedHomeBackgroundUrls[] and
+      // sets Main.cachedBgBlobUrl = [0] for the rest of the app.
+      // It is a no-op if the IDB entries are already in memory.
+      // SAMSUNG: lives in indexDbCacheImages.js; the single-bgImage path
+      // below is kept only as a fallback if that helper is not loaded.
+      if (typeof Main.loadHomeBgImagesFromIDB === 'function') {
+        return Main.loadHomeBgImagesFromIDB(function () {
+          _loadOfflineLogo(function () {
+            _loadOfflineLangIcons(_renderOfflineLangPage);
+          });
+        });
+      }
+
       if (Main.cachedBgBlobUrl) {
         return _loadOfflineLogo(function () {
           _loadOfflineLangIcons(_renderOfflineLangPage);
@@ -646,6 +998,12 @@ Main.restoreFromCacheAndOpenApp = function () {
       _loadOfflineBg();
     });
 
+    try {
+      if (Main.lgSettings && Main.lgSettings.netflix_app_token) {
+        bindingAppsToPms();
+      }
+    } catch (e) { console.warn('[Offline] bindingAppsToPms error:', e); }
+
     return true; // signal to caller: offline mode is handling this
 
   } catch (ex) {
@@ -707,14 +1065,96 @@ Main.deviceRegistrationAPi = function () {
         }
         Main.provisionRetryCount = 0;
 
+        // Store the fresh token/result so it is available for background refreshes
+        pageDetails = result.result;
+        try { localStorage.setItem('cachedPageDetails', JSON.stringify(result.result)); } catch(ex) { console.warn('[Cache] Failed to save pageDetails:', ex); }
+
+        // ── CACHE-HIT PATH ────────────────────────────────────────────────
+        // If all required data is already in localStorage (from a previous
+        // successful session) skip the download screen entirely and open the
+        // app immediately — exactly as we do when offline.
+        // APIs are refreshed silently in the background so the cache stays
+        // fresh for the NEXT boot without ever showing the download screen.
+        var _hasCachedTemplate = false;
+        try { _hasCachedTemplate = !!localStorage.getItem('cachedTemplateApiData'); } catch(e) {}
+
+        if (_hasCachedTemplate) {
+          console.log('[Cache] Full cache found — fetching fresh guest data then opening app');
+
+          // Fetch latest guest-info FIRST so g_name and other guest fields are
+          // up to date before the UI renders. restoreFromCacheAndOpenApp() is
+          // called inside the callback so the app only opens with fresh data.
+          // If guestInfo fails we fall back to opening with cached data.
+          function _openFromCache() {
+            if (Main.restoreFromCacheAndOpenApp()) {
+              console.log('[Cache] App opened from cache on online boot');
+
+              // Screen saver — called after UI renders
+              setTimeout(function () {
+                try {
+                  Main.screenSaverInterval();
+                  console.log('[Cache] screenSaverInterval called after cache-hit boot');
+                } catch (ssErr) {
+                  console.warn('[Cache] screenSaverInterval error:', ssErr);
+                }
+              }, 2000);
+
+            } else {
+              // Corrupt cache — fall through to full download
+              console.warn('[Cache] restoreFromCacheAndOpenApp returned false — falling back to full download');
+              macro("#mainContent").html("");
+              macro("#mainContent").html(Util.downloadingPage(0));
+              Navigation.downloadingPageLoad();
+              Main.guestInfo(function () {
+                Navigation.updateDownloadProgress(30);
+                Main.weatherApi(function () {
+                  Main.getHomeData(function () {
+                    Main.deviceProfileApi(function () {
+                      Navigation.updateDownloadProgress(60);
+                      Main.lgSetting();
+                      Main.prefetchAllChannelData();
+                      if (Main.db) { try { Main.db.close(); } catch(ex) {} Main.db = null; }
+                      var oldDbRequest = indexedDB.deleteDatabase("AppCacheDB");
+                      var fired = false;
+                      function go() {
+                        if (fired) return;
+                        fired = true;
+                        // The DB was just deleted, so any earlier failure latch is
+                        // stale - allow one clean open attempt for the new database.
+                        Main._dbUnavailable = false;
+                        Main._dbInitPending = false;
+                        Main._dbInitQueue   = [];
+                        Main.getTemplateApiData();
+                      }
+                      oldDbRequest.onsuccess = go;
+                      oldDbRequest.onerror = go;
+                      oldDbRequest.onblocked = go;
+                      setTimeout(go, 1500);
+                    });
+                  });
+                });
+              });
+            }
+          }
+
+          try {
+            Main.guestInfo(function () {
+              console.log('[Cache] guestInfo refreshed — now opening app with fresh guest data');
+              _openFromCache();
+            });
+          } catch (giErr) {
+            console.warn('[Cache] guestInfo threw — opening app with cached guest data:', giErr);
+            _openFromCache();
+          }
+
+          return;
+        }
+
+        // ── FULL DOWNLOAD PATH (first boot or corrupt cache) ─────────────
         // Display initial downloading page with 0% progress
         macro("#mainContent").html("");
         macro("#mainContent").html(Util.downloadingPage(0));
         Navigation.downloadingPageLoad();
-
-        // Store result for future use
-        pageDetails = result.result;
-        try { localStorage.setItem('cachedPageDetails', JSON.stringify(result.result)); } catch(ex) { console.warn('[Cache] Failed to save pageDetails:', ex); }
 
         // Begin sequence of API calls
         Main.guestInfo(function () {
@@ -786,8 +1226,10 @@ Main.deviceRegistrationAPi = function () {
         }
       });
 
-      // Network/server error — try to restore from localStorage cache and open app
-      if (Main.restoreFromCacheAndOpenApp()) {
+      // Network/server error — try to restore from localStorage cache and open app.
+      // Pass true: this is the true "no internet" path, so bypass any
+      // network-only logic (e.g. startup_screen canvas fetch) inside it.
+      if (Main.restoreFromCacheAndOpenApp(true)) {
         console.log('[Offline] App opened from cache after provision-auth network error');
         return;
       }
@@ -795,7 +1237,7 @@ Main.deviceRegistrationAPi = function () {
       // No cache available — show activation screen and retry
       Main.showActivationScreen();
     },
-    timeout: 20000,
+    timeout: 60000,
   });
 };
 
@@ -855,7 +1297,7 @@ Main.guestInfo = function (callback) {
         callback();
       }
     },
-    timeout: 20000,
+    timeout: 60000,
   });
 };
 
@@ -904,15 +1346,27 @@ Main.guestInfoAfterInterval = function () {
             cmdArray = [tvCmd.trim()];
           }
 
-          // Check if any reboot/refresh triggering command is present
+          // Check if any reboot triggering command is present
           var hasRebootCmd = cmdArray.some(function(c) {
             var cmd = (c || "").toLowerCase().trim();
-            return cmd === "reboot" || cmd === "refresh";
+            return cmd === "reboot"
           });
 
-          if (hasRebootCmd) {
-            // reboot or refresh found in command array → full checkout + reboot flow
-            console.log('[GuestInfo Interval] Reboot/Refresh command detected:', cmdArray, '— triggering CheckoutManager_requestCheckout');
+          // Separate refresh (clears cache first) from reboot (no cache clear needed)
+          var hasRefreshCmd = cmdArray.some(function(c) {
+            var cmd = (c || "").toLowerCase().trim();
+            return cmd === "refresh";
+          });
+
+          if (hasRefreshCmd) {
+            // refresh → clear all cache then full checkout + reboot
+            console.log('[GuestInfo Interval] Refresh command detected:', cmdArray, '— clearing cache then CheckoutManager_requestCheckout');
+
+            _clearAllCacheThenCheckout();
+
+          } else if (hasRebootCmd) {
+            // reboot (no refresh) → full checkout + reboot, cache kept
+            console.log('[GuestInfo Interval] Reboot command detected:', cmdArray, '— triggering CheckoutManager_requestCheckout');
 
             CheckoutManager_requestCheckout();
 
@@ -958,9 +1412,14 @@ Main.guestInfoAfterInterval = function () {
 
                 var wantBlank = null;
 
+                // Only wake the screen on checkin when the property opted in.
+                var pmsCheckinTvOn = !!(Main.deviceProfile &&
+                    Main.deviceProfile.property_detail &&
+                    Main.deviceProfile.property_detail.pms_checkin_tv_on === true);
+
                 if (!isCheckin && isScreenOn) {
                   wantBlank = true;
-                } else if (isCheckin && !isScreenOn) {
+                } else if (pmsCheckinTvOn && isCheckin && !isScreenOn) {
                   wantBlank = false;
                 }
 
@@ -1066,7 +1525,7 @@ Main.guestInfoAfterInterval = function () {
                       return;
                     }
 
-                    tizen.application.kill(ctx.contextId,
+                    tizen.application.kill(ctx.id,
                       function () {
                         console.log('[GuestInfo Interval] ✅ ' + app.name + ' destroyed successfully');
                         _destroyNext(index + 1);
@@ -1135,7 +1594,7 @@ Main.guestInfoAfterInterval = function () {
           }
         });
       },
-      timeout: 20000,
+      timeout: 60000,
     });
   }, interval * 1000);
 };
@@ -1305,7 +1764,7 @@ Main.startStatusHeartbeat = function () {
           }
         });
       },
-      timeout: 20000
+      timeout: 60000
     });
   }
 
@@ -1450,7 +1909,7 @@ Main.screenSaverInterval = function () {
         }
       });
     },
-    timeout: 20000
+    timeout: 60000
   });
 
   // ── Step 2: fetch /json-play-list for entry at index i ──────────────
@@ -1651,9 +2110,10 @@ Main.getTemplateApiData = function (comingFromHomeLang) {
 				// }
 
 				Main.dbInit(function () {
-					var bgImage = Main.templateApiData.home_screen_bg && Main.templateApiData.home_screen_bg[0];
-					if(bgImage){
-						// Same rule: do not let one image hold up the sequence.
+					// Cache EVERY home background (slideshow), not just [0].
+					var bgUrls = (Main.templateApiData.home_screen_bg || []).filter(Boolean);
+					if (bgUrls.length) {
+						// Same rule: do not let the images hold up the sequence.
 						var _bgDone = false;
 						var _bgGo = function () {
 							if (_bgDone) return;
@@ -1661,7 +2121,13 @@ Main.getTemplateApiData = function (comingFromHomeLang) {
 							Main.loadCachedImagesThenRender();
 						};
 						setTimeout(_bgGo, 5000);
-						Main.cacheImageToDB(bgImage, _bgGo);
+						// SAMSUNG: cacheAllHomeBgImages lives in indexDbCacheImages.js;
+						// fall back to the single-image cache if it is not loaded.
+						if (typeof Main.cacheAllHomeBgImages === 'function') {
+							Main.cacheAllHomeBgImages(bgUrls, _bgGo);
+						} else {
+							Main.cacheImageToDB(bgUrls[0], _bgGo);
+						}
 					} else {
 						Main.loadCachedImagesThenRender();
 					}
@@ -1746,9 +2212,294 @@ Main.getTemplateApiData = function (comingFromHomeLang) {
         }
       });
 		},
-		timeout: 20000,
+		timeout: 60000,
 	})
 }
+
+/**
+ * Main.alertsApi()
+ *
+ * Fetches GET /alerts once at startup.
+ * Stores the result in Main.alertsData (runtime) and localStorage
+ * so it is available immediately when an MQTT "notification" command arrives.
+ */
+Main.alertsApi = function () {
+  console.log('[AlertsAPI] Fetching /alerts…');
+
+  macro.ajax({
+    url: apiPrefixUrl + 'alerts',
+    type: 'GET',
+    headers: { Authorization: 'Bearer ' + pageDetails.access_token },
+    success: function (response) {
+      try {
+        var result = typeof response === 'string' ? JSON.parse(response) : response;
+
+        if (result && result.status === true && Array.isArray(result.result)) {
+          Main.alertsData = result.result;
+          try {
+            localStorage.setItem('cachedAlertsData', JSON.stringify(result.result));
+          } catch (ex) {
+            console.warn('[AlertsAPI] Failed to cache alertsData to localStorage:', ex);
+          }
+          console.log('[AlertsAPI] Alerts cached. Count:', result.result.length);
+        } else {
+          console.warn('[AlertsAPI] API returned no alerts or status:false');
+          // Try restoring from localStorage cache
+          try {
+            var cached = localStorage.getItem('cachedAlertsData');
+            if (cached) { Main.alertsData = JSON.parse(cached); }
+          } catch (ex) {}
+        }
+      } catch (parseErr) {
+        console.error('[AlertsAPI] Parse error:', parseErr);
+      }
+    },
+    error: function (err) {
+      console.error('[AlertsAPI] Fetch error:', err);
+      // Restore from cache on network error
+      try {
+        var cached = localStorage.getItem('cachedAlertsData');
+        if (cached) {
+          Main.alertsData = JSON.parse(cached);
+          console.log('[AlertsAPI] Alerts restored from localStorage cache');
+        }
+      } catch (ex) {}
+    },
+    timeout: 30000
+  });
+};
+
+/**
+ * Main.showAlertNotification(name)
+ *
+ * Called by the MQTT "notification" command handler.
+ *
+ * 1. Looks up the alert by exact name match in Main.alertsData.
+ * 2. Checks is_active === true.
+ * 3. Tears down whatever is currently on screen (live TV, lg TV, playlist,
+ *    screen-saver, canvas page) and goes to macroHome cleanly — exactly like
+ *    pressing EXIT from those pages — so backData is in a consistent state.
+ * 4. Then calls jsontemplateApi / playlistApi to render the alert template
+ *    over the home page background.
+ *
+ * @param {string} name  The payload.name value from the MQTT message.
+ */
+Main.showAlertNotification = function (name) {
+  console.log('[Alert] Notification received, name:', name);
+
+  // ── 1. Resolve alert entry ──────────────────────────────────────────────
+  var alertsSource = Main.alertsData;
+  if (!alertsSource || !alertsSource.length) {
+    // Last-chance: try localStorage
+    try {
+      var cached = localStorage.getItem('cachedAlertsData');
+      if (cached) { alertsSource = JSON.parse(cached); }
+    } catch (ex) {}
+  }
+
+  if (!alertsSource || !alertsSource.length) {
+    console.warn('[Alert] No alertsData available — ignoring notification');
+    return;
+  }
+
+  // Case-insensitive exact name match
+  var lowerName = (name || '').toLowerCase().trim();
+  var alertEntry = null;
+  for (var i = 0; i < alertsSource.length; i++) {
+    var a = alertsSource[i];
+    if (a && (a.name || '').toLowerCase().trim() === lowerName) {
+      alertEntry = a;
+      break;
+    }
+  }
+
+  if (!alertEntry) {
+    console.warn('[Alert] No alert found with name:', name);
+    return;
+  }
+
+  if (!alertEntry.is_active) {
+    console.warn('[Alert] Alert is_active=false — ignoring:', name);
+    return;
+  }
+
+  if (!alertEntry.destination_url) {
+    console.warn('[Alert] Alert has no destination_url:', name);
+    return;
+  }
+
+  var destUrl    = alertEntry.destination_url;
+  var mediaType  = alertEntry.media_type; // "dynamicPage" | "playlist"
+
+  console.log('[Alert] Matched alert:', alertEntry.title, '| media_type:', mediaType, '| dest:', destUrl);
+
+  // ── 2. Stop screen-saver if active ─────────────────────────────────────
+  try {
+    if (typeof ScreenSaver !== 'undefined' && ScreenSaver.isActive()) {
+      ScreenSaver.handleKeyPress(); // stops saver + restores previous state
+    }
+  } catch (e) { console.warn('[Alert] ScreenSaver stop error:', e); }
+
+  // ── 3. Tear down the current view and go to home ────────────────────────
+  // We replicate the EXIT key behaviour for each view so backData is clean.
+  var currentView = view;
+
+  // Snapshot the startup template NOW — before any state reset — so that even
+  // if a second alert fires while the first is showing, we always restore the
+  // original startup canvas template (not the first alert's template).
+  // Only meaningful in startup screen mode; ignored otherwise.
+  var _savedStartupTemplate = (Main._isStartupScreenMode)
+      ? (Main._startupRootTemplateData || Main.jsonTemplateData || null)
+      : null;
+
+  function _proceedToAlert() {
+    // Reset navigation state
+    backData = [];
+    Main.pageHistory = [];
+    presentPagedetails = {};
+
+    // ── Startup screen mode ───────────────────────────────────────────────
+    // The startup canvas (ourHotel) is the root — there is no home page.
+    // EXIT from the alert must return to the startup canvas, not macroHome.
+    if (Main._isStartupScreenMode) {
+      console.log('[Alert] Startup screen mode — using startup canvas as alert base');
+
+      // Mark alert as active so the screen saver idle timer will not fire
+      // while the alert is being displayed.
+      Main._isAlertActive = true;
+      // Stop any pending screen saver idle countdown immediately.
+      try { if (typeof ScreenSaver !== 'undefined') ScreenSaver.clearIdleTimer(); } catch(e) {}
+
+      // Tag presentPagedetails with the original startup template (snapshotted
+      // above, before any reset) so addBackData() inside jsontemplateApi captures
+      // it in the single backData entry — one EXIT pops it and previousPage()
+      // restores the correct startup canvas template.
+      presentPagedetails._startupTemplateData = _savedStartupTemplate;
+      view = 'ourHotel';
+      presentPagedetails.view = 'ourHotel';
+
+      // Show the alert template. jsontemplateApi calls addBackData("ourHotel")
+      // which captures presentPagedetails (with _startupTemplateData embedded)
+      // as the single backData entry — EXIT pops it and returns to startup canvas.
+      if (mediaType === 'playlist') {
+        Main.playlistApi(destUrl, null);
+      } else {
+        Main.jsontemplateApi(destUrl);
+      }
+      return;
+    }
+
+    // If the alert fired while on the language selection page, EXIT on the
+    // alert template must return to the language page, not to home.
+    // Push a languagePage entry into backData so the back destination is correct.
+    // For all other views the back destination is the home page.
+
+    if (currentView === 'languagePage') {
+      var _langPageEntry = {};
+      _langPageEntry.view     = 'languagePage';
+      _langPageEntry.htmlData = Util.languageSelection();
+      backData.push(_langPageEntry);
+
+      // Render language page as the visible base while the alert template loads
+      macro('#mainContent').html('');
+      macro('#mainContent').html(Util.languageSelection());
+      macro('#mainContent').show();
+      view = 'languagePage';
+      presentPagedetails.view = 'languagePage';
+
+    } else {
+      var langId  = Main.clickedLanguage || '';
+      var appList = (Main.cachedHomeByLang && Main.cachedHomeByLang[langId]) || [];
+      Main.renderHomePage(appList);
+    }
+
+    // Show alert template on top.
+    // jsontemplateApi calls addBackData("ourHotel") internally, which pushes
+    // the current base page (languagePage or home) into backData so EXIT
+    // from the alert returns correctly to whichever base was set above.
+    if (mediaType === 'playlist') {
+      Main.playlistApi(destUrl, null);
+    } else {
+      Main.jsontemplateApi(destUrl);
+    }
+  }
+
+  // ── Live TV (liveTvPlayer) ──────────────────────────────────────────────
+  if (currentView === 'liveTvPlayer') {
+    console.log('[Alert] Cleaning up liveTvPlayer before showing alert');
+    try {
+      if (Main.channelMetaRefreshInterval) {
+        clearInterval(Main.channelMetaRefreshInterval);
+        Main.channelMetaRefreshInterval = null;
+      }
+    } catch (e) {}
+    try { resetHdmiToLIveTv(); }       catch (e) {}
+    try { clearNoSignalNative(); }     catch (e) {}
+    try { exitLiveTv(); }              catch (e) {}
+    try { macro('.live-tv-overlay').css('display', 'none'); } catch (e) {}
+    try { macro('.live-tv-guide-container').css('display', 'none'); } catch (e) {}
+    try {
+      presentPagedetails.currentLiveChannelId   = undefined;
+      presentPagedetails.currentLiveChannelUuid = undefined;
+      presentPagedetails.showingLiveTvGuide     = false;
+    } catch (e) {}
+    try { document.body.style.background = '#000'; } catch (e) {}
+    // SAMSUNG: LG resets HCAP_MODE_1 here. There is no HCAP mode on Tizen
+    // (the app window always composites above the video plane); instead undo
+    // the transparent app layer set for the video plane.
+    try {
+      if (Navigation && Navigation._restoreAppLayerBackground) Navigation._restoreAppLayerBackground();
+    } catch (e) {}
+    _proceedToAlert();
+    return;
+  }
+
+  // ── LG Live TV (lgLgLiveTv) ─────────────────────────────────────────────
+  if (currentView === 'lgLgLiveTv') {
+    console.log('[Alert] Cleaning up lgLgLiveTv before showing alert');
+    try { if (typeof stopAndClearMedia === 'function') stopAndClearMedia(); } catch (e) {}
+    try {
+      if (Main.lgLgchannelMetaRefreshInterval) {
+        clearInterval(Main.lgLgchannelMetaRefreshInterval);
+        Main.lgLgchannelMetaRefreshInterval = null;
+      }
+    } catch (e) {}
+    try {
+      presentPagedetails.currentChannelId = undefined;
+      presentPagedetails.showingTvGuide   = false;
+    } catch (e) {}
+    try { macro('.lg-tv-overlay').css('display', 'none'); } catch (e) {}
+    try { macro('.tv-guide-container').css('display', 'none'); } catch (e) {}
+    try { document.body.style.background = '#000'; } catch (e) {}
+    // SAMSUNG: no HCAP mode to reset (see liveTvPlayer above); undo the
+    // transparent app layer set by Navigation._makeAppLayerTransparent().
+    try {
+      if (Navigation && Navigation._restoreAppLayerBackground) Navigation._restoreAppLayerBackground();
+    } catch (e) {}
+    try { exitLiveTv(); } catch (e) {}
+    _proceedToAlert();
+    return;
+  }
+
+  // ── Playlist (playing via PlaylistPlayer) ───────────────────────────────
+  if (currentView === 'playlist') {
+    console.log('[Alert] Stopping PlaylistPlayer before showing alert');
+    try { if (typeof PlaylistPlayer !== 'undefined') PlaylistPlayer.stop(); } catch (e) {}
+    _proceedToAlert();
+    return;
+  }
+
+  // ── ourHotel canvas page ────────────────────────────────────────────────
+  if (currentView === 'ourHotel') {
+    console.log('[Alert] Leaving ourHotel canvas before showing alert');
+    // canvas-renderer cleanup is handled inside renderHomePage via html('')
+    _proceedToAlert();
+    return;
+  }
+
+  // ── All other views (home, language, casting, MyDevice, liveTv stub) ───
+  _proceedToAlert();
+};
 
 Main.loadCachedImagesThenRender = function() {
 	Navigation.updateDownloadProgress(95);
@@ -1778,7 +2529,40 @@ Main.loadCachedImagesThenRender = function() {
 			_proceeded = true;
 			if (_proceedDeadline) { clearTimeout(_proceedDeadline); _proceedDeadline = null; }
 
-			if(Main.templateApiData && Main.templateApiData.language_detail) {
+			if(!Main.templateApiData) return;
+
+			// startup_screen: if set, show the dynamic canvas as the root screen.
+			// No language page / home page is shown before it.
+			// EXIT from the root startup canvas does nothing (stays on that screen).
+			// EXIT from a child canvas (reached via canvas actions) returns to root
+			// via the normal Main.pageHistory stack.
+			// NOTE: Main.startupScreenApi() always fetches the template over the
+			// network (no offline/IDB fallback). This function is also reached
+			// when offline (e.g. pressing the language icon from Home calls
+			// Main.getTemplateApiData(), which — since Main.templateApiData is
+			// already cached — jumps straight here instead of re-fetching).
+			// Bypass the startup_screen branch while truly offline (Main._noInternet)
+			// so the page falls through to the language page below instead of
+			// getting stuck on a canvas fetch that can never succeed.
+			var startupUuid = !Main._noInternet && Main.templateApiData.startup_screen;
+			if (startupUuid) {
+				console.log('[StartupScreen] startup_screen set:', startupUuid, '— rendering dynamic canvas as root');
+				if (window.bootStep) window.bootStep('language page', 'ok');
+				try { Navigation.updateDownloadProgress(100); } catch (e) {}
+				Main.updateDeviceDetailsSendApi();
+				Main.deviceActivity("open", "page", "startup screen");
+				// Mark startup mode so navigateBackCanvas blocks EXIT at the root.
+				Main._isStartupScreenMode = true;
+				// Clear any stale navigation state — startup canvas IS the root.
+				backData = [];
+				presentPagedetails = {};
+				Main.pageHistory = [];
+				Main.startupScreenApi(startupUuid);
+				return;
+			}
+
+			// ── Normal flow: show language / welcome page ─────────────────────────
+			if(Main.templateApiData.language_detail) {
 				view = "languagePage";
 				presentPagedetails.view = view;
 
@@ -1795,6 +2579,7 @@ Main.loadCachedImagesThenRender = function() {
 				macro("#mainContent").show();
 				macro('.imageFocus').removeClass('imageFocus');
 				macro('#lang_btn-0').addClass('imageFocus');
+        Navigation.updateLanguagePageTexts(0);
 
         // Re-arm screen saver idle timer each time language page is shown
         try { if (typeof ScreenSaver !== 'undefined') ScreenSaver.armIdleTimer(); } catch (e) {}
@@ -1960,6 +2745,75 @@ Main.renderHomePage = function (applist) {
 
   // Re-arm screen saver idle timer each time home page is shown
   try { if (typeof ScreenSaver !== 'undefined') ScreenSaver.armIdleTimer(); } catch (e) {}
+
+  // Start home background slideshow (no-op if only one image)
+  Main.startHomeBgSlideshow();
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  HOME BACKGROUND SLIDESHOW
+//
+//  Rotates through Main._cachedHomeBackgroundUrls[] every 30 seconds by
+//  swapping the src of  #home-bg-img  (rendered by Util.homePageHtml).
+//
+//  Only active when there are ≥ 2 images.  Safe to call start/stop multiple
+//  times — the guard flag and clearInterval prevent duplicate timers.
+// ─────────────────────────────────────────────────────────────────────────────
+
+Main._homeBgSlideshowTimer  = null;
+Main._homeBgSlideshowIndex  = 0;
+Main.HOME_BG_SLIDESHOW_INTERVAL = 30000; // 30 seconds
+
+Main.startHomeBgSlideshow = function () {
+  // Always stop any running timer before (re)starting
+  Main.stopHomeBgSlideshow();
+
+  var urls = Main._cachedHomeBackgroundUrls;
+  if (!urls || urls.length < 2) {
+    // Single image — nothing to rotate
+    return;
+  }
+
+  // Reset to first image on every (re)start so the order is predictable
+  Main._homeBgSlideshowIndex = 0;
+
+  Main._homeBgSlideshowTimer = setInterval(function () {
+    // Only run if we are actually on the home page
+    if (view !== 'macroHome') {
+      Main.stopHomeBgSlideshow();
+      return;
+    }
+
+    var imgs = Main._cachedHomeBackgroundUrls;
+    if (!imgs || imgs.length < 2) {
+      Main.stopHomeBgSlideshow();
+      return;
+    }
+
+    Main._homeBgSlideshowIndex = (Main._homeBgSlideshowIndex + 1) % imgs.length;
+    var nextUrl = imgs[Main._homeBgSlideshowIndex];
+    if (!nextUrl) { return; }
+
+    try {
+      var el = document.getElementById('home-bg-img');
+      if (el) {
+        el.src = nextUrl;
+        console.log('[HomeBgSlideshow] Showing image', Main._homeBgSlideshowIndex, 'of', imgs.length);
+      }
+    } catch (e) {
+      console.warn('[HomeBgSlideshow] Failed to swap bg image:', e);
+    }
+  }, Main.HOME_BG_SLIDESHOW_INTERVAL);
+
+  console.log('[HomeBgSlideshow] Started —', urls.length, 'images, interval', Main.HOME_BG_SLIDESHOW_INTERVAL / 1000, 's');
+};
+
+Main.stopHomeBgSlideshow = function () {
+  if (Main._homeBgSlideshowTimer) {
+    clearInterval(Main._homeBgSlideshowTimer);
+    Main._homeBgSlideshowTimer = null;
+    console.log('[HomeBgSlideshow] Stopped');
+  }
 };
 
 /**
@@ -2030,10 +2884,16 @@ Main.deviceProfileApi = function (callback) {
         }
 
         // Start independent device status heartbeat (same interval, fully decoupled from guest-info)
-        Main.startStatusHeartbeat();
+        if (!Main._statusHeartbeatStarted) {
+          Main._statusHeartbeatStarted = true;
+          Main.startStatusHeartbeat();
+        }
 
         // Fetch screen-saver data once and arm the idle timer
         Main.screenSaverInterval();
+
+        // Fetch alerts data once and cache for MQTT notification handling
+        Main.alertsApi();
 
         // Apply the property's default volume level to the TV
         Main.applyDefaultVolume();
@@ -2126,7 +2986,7 @@ Main.deviceProfileApi = function (callback) {
 				callback();
 			}
 		},
-		timeout: 20000,
+		timeout: 60000,
 	})
 };
 
@@ -2365,7 +3225,7 @@ Main.getHomeData = function (callback) {
         callback();
       }
     },
-    timeout: 20000,
+    timeout: 60000,
   });
 };
 
@@ -2413,7 +3273,7 @@ Main.weatherApi = function (callback) {
         callback();
       }
     },
-    timeout: 20000,
+    timeout: 60000,
   });
 };
 
@@ -2462,7 +3322,102 @@ Main.lgSetting = function () {
       });
       console.error("Weather API error:", err);
     },
-    timeout: 20000,
+    timeout: 60000,
+  });
+};
+
+/**
+ * Main.startupScreenApi(uuid)
+ *
+ * Used exclusively when templateApiData.startup_screen is set.
+ * Identical to jsontemplateApi() EXCEPT:
+ *   - Does NOT call addBackData() — the startup canvas has no parent page.
+ *   - Sets Main._isStartupScreenMode = true so navigateBackCanvas() knows
+ *     to block EXIT when pageHistory is empty (root startup screen).
+ *
+ * All canvas rendering (Util.ourHotelPage, CanvasRenderer, CanvasAction etc.)
+ * is exactly the same as the normal ourHotel flow.
+ */
+Main.startupScreenApi = function(AppUrl) {
+  console.log('[StartupScreen] Fetching startup template:', AppUrl);
+
+  _showCanvasLineLoader();
+  var _tplLoadStart       = Date.now();
+  var _TPL_LOADING_MIN_MS = 1000;
+
+  function _hideAfterMinTime() {
+    var _elapsed   = Date.now() - _tplLoadStart;
+    var _remaining = _TPL_LOADING_MIN_MS - _elapsed;
+    if (_remaining > 0) {
+      setTimeout(function () { _hideCanvasLineLoader(); }, _remaining);
+    } else {
+      _hideCanvasLineLoader();
+    }
+  }
+
+  macro.ajax({
+    url: apiPrefixUrl + "json-template?template_uuid=" + (AppUrl ? AppUrl : ""),
+    type: "GET",
+    headers: {
+      Authorization: "Bearer " + pageDetails.access_token,
+    },
+    success: function (response) {
+      try {
+        var result = typeof response === "string" ? JSON.parse(response) : response;
+
+        if (result.status === true) {
+          Main.jsonTemplateData = result.result;
+          Main.clearRouteAnchor = null;   // fresh startup visit — no anchor yet
+          // Permanently cache the original startup template so showAlertNotification
+          // can always restore it — even if multiple alerts fire in sequence and
+          // Main.jsonTemplateData gets overwritten repeatedly.
+          Main._startupRootTemplateData = result.result;
+          Main._isAlertActive = false;
+          console.log('[StartupScreen] Template data loaded successfully');
+
+          // NOTE: No addBackData() call here — startup canvas is the root.
+          view = "ourHotel";
+          presentPagedetails.view = view;
+
+          macro("#mainContent").html('');
+          if (typeof Util !== 'undefined' && Util.ourHotelPage) {
+            macro("#mainContent").html(Util.ourHotelPage(_hideAfterMinTime));
+            macro("#mainContent").show();
+          } else {
+            _hideAfterMinTime();
+          }
+
+          // Arm the screen saver idle timer — works from ourHotel in startup mode
+          try { if (typeof ScreenSaver !== 'undefined') ScreenSaver.armIdleTimer(); } catch (e) {}
+
+        } else {
+          console.error('[StartupScreen] Template API returned status: false');
+          _hideAfterMinTime();
+        }
+      } catch (parseError) {
+        console.error('[StartupScreen] Failed to parse template response:', parseError);
+        _hideAfterMinTime();
+      }
+    },
+    error: function(err) {
+      console.error('[StartupScreen] Template load failed:', err);
+      _hideAfterMinTime();
+
+      Main.logTvException({
+        error_type:    "API_ERROR",
+        error_code:    "STARTUP_SCREEN_FETCH_FAILED",
+        error_message: "Failed to fetch startup screen template",
+        error_source:  "Main.startupScreenApi",
+        module:        "startup_screen",
+        action:        "fetch_template_data",
+        extra_data: {
+          status_code:   err && err.status      ? err.status      : undefined,
+          status_text:   err && err.statusText  ? err.statusText  : undefined,
+          response_text: err && err.responseText ? err.responseText : undefined
+        }
+      });
+    },
+    timeout: 30000
   });
 };
 
@@ -2499,8 +3454,13 @@ Main.jsontemplateApi = function(AppUrl) {
 
         if (result.status === true) {
           Main.jsonTemplateData = result.result;
+          Main.clearRouteAnchor = null;   // fresh visit — drop any stale anchor
 
           console.log('[API] Template data loaded successfully');
+
+          // First template of this visit — a is_clear_route_history template
+          // is the route root, so make sure no stale canvas history survives.
+          try { Main.applyClearRouteHistory(result.result); } catch (e) {}
 
           Main.addBackData("ourHotel");
           view = "ourHotel";
@@ -2654,7 +3614,7 @@ Main.castingNewApi = function () {
       macro("#mainContent").show();
       utilities.updatingTimeAndDate();
     },
-    timeout: 20000
+    timeout: 60000
   });
 };
 
@@ -2707,7 +3667,7 @@ Main.deviceActivity = function (actionType, destinationType, name) {
         }
       });
     },
-    timeout: 20000,
+    timeout: 60000,
   })
 };
 
@@ -2892,7 +3852,7 @@ Main.updateDeviceDetailsSendApi = function () {
             }
           });
         },
-        timeout: 20000
+        timeout: 60000
       })
     }else {
       var xhr = new XMLHttpRequest();
@@ -3177,7 +4137,7 @@ Main.prefetchAllChannelData = function () {
         }
       });
     },
-    timeout: 20000
+    timeout: 60000
   });
 };
 
@@ -3235,7 +4195,7 @@ Main.lgLgChannelIdApi = function (comingfromWatchTvApp) {
       });
       console.error("API error for Lg Channel data:", err);
     },
-    timeout: 20000,
+    timeout: 60000,
   })
 }
 
@@ -3376,7 +4336,7 @@ Main.lgLgChannelApiMetaData = function (comingfromWatchTvApp, channelIdDetails) 
       });
       console.error("API error For Lg channel Metadata:", err);
     },
-    timeout: 20000,
+    timeout: 60000,
   });
 };
  
@@ -3515,124 +4475,26 @@ Main._renderLiveTvPlayer = function (channelIdDetails, channelMetaDetails) {
   presentPagedetails.liveTvChannelIdDetails   = channelIdDetails;
   presentPagedetails.liveTvChannelMetaDetails = channelMetaDetails;
 
-    // SAMSUNG: no HCAP mode - the app window always composites above the
-    // video plane on Tizen. Live TV is not a separate launchable app either:
-    // tizen.tvwindow.setSource({ type: 'TV' }) puts the tuner on screen and
-    // tizen.tvchannel.tune() (below) selects the channel.
-              if (typeof tizen !== "undefined" && tizen.tvwindow) {
-                  try {
-                      tizen.tvwindow.setSource({ type: 'TV' },
-                          function () {
-                              macro("#watchChannel_tuningText").css('display', 'none');
-                              console.log("TV source selected");
-                          },
-                          function (f) {
-                              console.log("Failed to select TV source: ", f && f.message);
-                          });
-                  } catch (eSrc) {
-                      console.log("setSource threw: ", eSrc && eSrc.message);
-                  }
-              }
-
-
-
-  // Tune to first channel
+  // SAMSUNG: RF vs IPTV is decided per channel inside LiveTv.play()
+  // (tvwindow + tvchannel/broadcast for RF, avplay for udp://). Do NOT
+  // setSource(TV) here unconditionally - it fights avplay for IP channels.
   if (channelIdDetails && channelIdDetails[0] && channelIdDetails[0].lg_ch_url) {
-    var chUrl = channelIdDetails[0].lg_ch_url;
+    var firstCh = channelIdDetails[0];
+    presentPagedetails.currentLiveChannelId   = String(firstCh.epg_id || '');
+    presentPagedetails.currentLiveChannelUuid = String(firstCh.channel_uuid || '');
 
-    // ── Track initial Live TV channel open ───────────────────────────
     try {
-      Main.deviceActivity("open", "channel",
-        channelIdDetails[0].name || channelIdDetails[0].title || "");
+      Main.deviceActivity("open", "channel", firstCh.name || firstCh.title || "");
     } catch(e) { console.warn('[deviceActivity] Live TV initial channel tracking error:', e); }
 
-    // UDP IP channel — e.g. "udp://239.74.48.14:8013"
-    if (/^udp:\/\/@?\d{1,3}(\.\d{1,3}){3}:\d+$/.test(chUrl)) {
-      var urlWithoutPrefix = chUrl.replace(/^udp:\/\/@?/, "");
-      var parts = urlWithoutPrefix.split(":");
-      var ip   = parts[0];
-      var port = parseInt(parts[1]);
-
-      // SAMSUNG: UDP/RTP multicast is NOT a tuner channel - it is played with
-      // webapis.avplay via AVPlayExtension, which accepts udp:// and rtp://
-      // URLs directly.
-      try {
-        try { webapis.avplay.stop(); } catch (e) {}
-        try { webapis.avplay.close(); } catch (e) {}
-
-        webapis.avplay.open("udp://" + ip + ":" + port);
-        webapis.avplay.setDisplayRect(0, 0,
-          (window.screen && window.screen.width)  || 1920,
-          (window.screen && window.screen.height) || 1080);
-
-        webapis.avplay.prepareAsync(function () {
-          webapis.avplay.play();
-          macro('.live-tv-guide-container').css('display', 'none');
-          console.log('[Live TV] Successfully switched to UDP channel');
-        }, function (error) {
-          console.error("Failed to open UDP channel via avplay:", error && error.message);
-        });
-      } catch (eUdp) {
-        console.error("Failed to change channel via avplay:", eUdp && eUdp.message);
-      }
-    }
-
-    // RF channel with majorNumber-minorNumber format — e.g. "7-7"
-    else if (/^\d+-\d+$/.test(chUrl)) {
-      var channelParts = chUrl.split("-");
-      var majorNumber  = parseInt(channelParts[0]);
-      var minorNumber  = parseInt(channelParts[1]);
-
-      console.log('[Live TV] Detected RF channel class 3 format:', chUrl);
-      // SAMSUNG: tizen.tvchannel.tune({ major, minor }, callbacks, errorCb).
-      // There is no rfBroadcastType parameter - the tuner uses whatever
-      // broadcast type the TV was set up with during channel scan.
-      try {
-        tizen.tvchannel.tune({ major: majorNumber, minor: minorNumber }, {
-          onsuccess: function () {
-            macro('.live-tv-guide-container').css('display', 'none');
-            console.log('[Live TV] Successfully switched to RF channel:', majorNumber + '-' + minorNumber);
-          },
-          onnosignal: function () {
-            console.error("[Live TV] No signal on RF channel:", majorNumber + '-' + minorNumber);
-          },
-          onprograminforeceived: function () {}
-        }, function (error) {
-          console.error("[Live TV] Failed to change RF channel via tvchannel:", error && error.message);
-        });
-      } catch (eRf) {
-        console.error("[Live TV] tvchannel.tune threw:", eRf && eRf.message);
-      }
-    }
-
-    // Logical channel number — e.g. "10" or "4"
-    else if (/^\d+$/.test(chUrl)) {
-      var logicalNumber = parseInt(chUrl);
-
-      console.log('[Live TV] Detected RF channel class 1 format (logical number):', chUrl);
-      // SAMSUNG: tvchannel has no "logical number only" form. A single-part
-      // channel number is addressed as major with minor 0.
-      try {
-        tizen.tvchannel.tune({ major: logicalNumber, minor: 0 }, {
-          onsuccess: function () {
-            macro('.live-tv-guide-container').css('display', 'none');
-            console.log('[Live TV] Successfully switched to logical channel:', logicalNumber);
-          },
-          onnosignal: function () {
-            console.error("[Live TV] No signal on logical channel:", logicalNumber);
-          },
-          onprograminforeceived: function () {}
-        }, function (error) {
-          console.error("[Live TV] Failed to change logical channel via tvchannel:", error && error.message);
-        });
-      } catch (eLog) {
-        console.error("[Live TV] tvchannel.tune threw:", eLog && eLog.message);
-      }
-    }
-
-    else {
-      Navigation.playSelectedChannel(chUrl);
-    }
+    LiveTv.play(firstCh, {
+      onSuccess: function () {
+        macro('#watchChannel_tuningText').css('display', 'none');
+        macro('.live-tv-guide-container').css('display', 'none');
+      },
+      onNoSignal: function () { console.warn('[Live TV] No signal:', firstCh.lg_ch_url); },
+      onError:    function (m) { console.error('[Live TV] Play failed:', firstCh.lg_ch_url, m); }
+    });
   }
 
   // ── Hide loader only after minimum display time has elapsed ─────────
@@ -3687,6 +4549,22 @@ Main.liveTvChannelIdApi = function (comingfromWatchTvApp) {
       _showCanvasLineLoader();
       Main.liveTvChannelIdDetails   = cachedIdDetails;
       Main.liveTvChannelMetaDetails = cachedMetaDetails;
+
+      // ── Arm the 30-min channel-feed refresh on the cached path ────────
+      // On a cache boot Main._restoredFromCache is true, so this function
+      // returns before liveTvChannelApiMetaData() — which is what normally
+      // arms Main.channelMetaRefreshInterval. Without this, the refresh is
+      // never re-created after the Live TV exit handler clears it, and it is
+      // never created at all if prefetchAllChannelData()'s channel-feed call
+      // failed at boot. Arming it here means every entry into Live TV
+      // restarts the refresh, so it recovers on its own once internet is back.
+      if (Main.channelMetaRefreshInterval) {
+        clearInterval(Main.channelMetaRefreshInterval);
+      }
+      Main.channelMetaRefreshInterval = setInterval(function () {
+        Main.channelListUpdatingFiveMinutes();
+      }, 30 * 60 * 1000);
+      // ────────────────────────────────────────────────────────────────
       if (comingfromWatchTvApp) {
         var filteredId   = Main._filterAndSortLiveTvChannels(cachedIdDetails);
         var filteredMeta = Main._filterAndSortLiveTvMeta(cachedMetaDetails);
@@ -3818,7 +4696,7 @@ Main.liveTvChannelIdApi = function (comingfromWatchTvApp) {
       });
       console.error('[liveTvChannelIdApi] API error:', err);
     },
-    timeout: 20000
+    timeout: 60000
   });
 };
 
@@ -3872,7 +4750,7 @@ Main.liveTvChannelApiMetaData = function (comingfromWatchTvApp, channelIdDetails
         }
       });
     },
-    timeout: 20000
+    timeout: 60000
   });
 };
 
@@ -3930,8 +4808,11 @@ Main.channelListUpdatingFiveMinutes = function () {
  * Prefers cached home backgrounds; falls back to other available options.
  */
 Main.getInitialHomeBackgroundUrl = function () {
-  if (Main._cachedHomeBackgroundUrls && Main._cachedHomeBackgroundUrls.length > 0) {
-    return Main._cachedHomeBackgroundUrls[0];
+  // The array can be sparse when some homeBg_N slots are missing from IDB,
+  // so take the first entry that actually resolved rather than index 0.
+  var _cached = Main._cachedHomeBackgroundUrls || [];
+  for (var i = 0; i < _cached.length; i++) {
+    if (_cached[i]) { return _cached[i]; }
   }
 
   return (

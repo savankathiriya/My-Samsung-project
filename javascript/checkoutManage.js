@@ -90,7 +90,7 @@ function destroyAppsThenReboot(complete) {
                     done();
                     return;
                 }
-                tizen.application.kill(ctx.contextId,
+                tizen.application.kill(ctx.id,
                     function () {
                         console.log("✅ " + app.name + " destroyed");
                         done();
